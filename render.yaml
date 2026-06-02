@@ -1,0 +1,20 @@
+# Configuração de deploy no Render (Blueprint).
+# Ao conectar este repositório no Render como "Blueprint", ele cria o serviço
+# web, instala as dependências, sobe com disco permanente (para o banco não se
+# perder) e pede a senha de acesso.
+services:
+  - type: web
+    name: lexflow
+    runtime: node
+    plan: starter           # necessário para ter disco permanente
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: LEXFLOW_DB
+        value: /data/lexflow.db   # banco salvo no disco permanente
+      - key: LEXFLOW_PASSWORD
+        sync: false               # você define a senha no painel do Render
+    disk:
+      name: lexflow-data
+      mountPath: /data
+      sizeGB: 1

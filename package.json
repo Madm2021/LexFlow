@@ -1,0 +1,29 @@
+{
+  "name": "lexflow",
+  "version": "1.0.0",
+  "description": "Sistema web para subir, importar e unificar planilhas em um banco de dados único com schema flexível.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "planilhas",
+    "spreadsheet",
+    "import",
+    "sqlite",
+    "database"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "csv-parse": "^6.2.1",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "multer": "^2.0.1"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  }
+}

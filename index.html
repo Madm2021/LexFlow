@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LexFlow — Banco unificado de planilhas</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⬡</span>
+      <div>
+        <h1>LexFlow</h1>
+        <p class="tagline">Todas as suas planilhas em uma única lista, sem duplicar</p>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><strong id="stat-records">0</strong><span>registros</span></div>
+      <div class="stat"><strong id="stat-columns">0</strong><span>colunas</span></div>
+      <div class="stat"><strong id="stat-imports">0</strong><span>planilhas</span></div>
+      <a id="logout-link" href="/logout" class="logout" hidden>Sair</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="upload-section">
+      <div id="dropzone" class="dropzone">
+        <input type="file" id="file-input" multiple accept=".xlsx,.xlsm,.csv,.txt" hidden />
+        <div class="dropzone-inner">
+          <span class="dz-icon">⤓</span>
+          <p><strong>Arraste planilhas aqui</strong> ou clique para selecionar</p>
+          <small>.xlsx, .xlsm, .csv — vários de uma vez. Linhas repetidas são ignoradas automaticamente.</small>
+        </div>
+      </div>
+      <div id="upload-feedback" class="feedback"></div>
+    </section>
+
+    <section class="toolbar">
+      <input type="search" id="search" placeholder="🔎 Buscar em toda a lista (qualquer coluna)..." />
+      <button id="search-btn">Buscar</button>
+      <button id="search-clear" class="ghost" hidden>Limpar</button>
+      <span class="spacer"></span>
+      <button id="view-btn" class="ghost" title="Alternar entre lista enxuta e colunas originais">🧩 Colunas: enxuta</button>
+      <button id="imports-btn" class="ghost" title="Ver planilhas importadas">📄 Planilhas</button>
+      <a id="export-link" href="/api/export.csv"><button class="ghost">⤓ Exportar CSV</button></a>
+    </section>
+
+    <section id="imports-panel" class="imports-panel" hidden></section>
+
+    <section class="viewer">
+      <div id="viewer">
+        <div class="empty-state" id="empty-state">
+          <p>Sua lista está vazia. Suba planilhas acima para começar a unificar os dados.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

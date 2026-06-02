@@ -1,0 +1,59 @@
+========================================================
+   LEXFLOW — COMO USAR NO MAC (passo a passo)
+========================================================
+
+Você só precisa fazer o PASSO 1 e o PASSO 2 UMA ÚNICA VEZ.
+Depois, é só o PASSO 3 sempre que quiser usar.
+
+--------------------------------------------------------
+PASSO 1 — Instalar o Node.js (uma vez só)
+--------------------------------------------------------
+1. Abra o site:  https://nodejs.org
+2. Clique no botão verde que diz "LTS".
+3. Abra o arquivo baixado e clique em Continuar / Concordar / Instalar.
+   (É um instalador normal, igual a qualquer programa.)
+
+
+--------------------------------------------------------
+PASSO 2 — Colocar a pasta do LexFlow no lugar
+--------------------------------------------------------
+1. Descompacte o arquivo "LexFlow.zip" (dois cliques nele).
+2. Vai aparecer uma pasta chamada "LexFlow".
+3. Arraste essa pasta para um lugar fácil, por exemplo a sua Mesa
+   (Área de Trabalho / Desktop).
+
+
+--------------------------------------------------------
+PASSO 3 — Abrir o sistema (sempre que quiser usar)
+--------------------------------------------------------
+1. Entre na pasta "LexFlow".
+2. Dê dois cliques em:  "Iniciar LexFlow.command"
+
+   ⚠️ Na PRIMEIRA vez, o Mac pode bloquear por segurança.
+   Se isso acontecer:
+     - Clique com o BOTÃO DIREITO em "Iniciar LexFlow.command"
+     - Escolha "Abrir"
+     - E confirme em "Abrir" de novo.
+   (Só precisa fazer isso na primeira vez.)
+
+3. Vai abrir uma janela preta (é normal!) e, em seguida, o
+   sistema abre sozinho no seu navegador, no endereço:
+        http://localhost:3000
+
+4. Pronto! Arraste suas planilhas para dentro e use à vontade.
+
+--------------------------------------------------------
+PARA FECHAR O SISTEMA
+--------------------------------------------------------
+Basta FECHAR a janela preta. Seus dados ficam guardados na
+própria pasta (no arquivo data/lexflow.db) para a próxima vez.
+
+--------------------------------------------------------
+DÚVIDAS COMUNS
+--------------------------------------------------------
+• "Aparece http://localhost:3000 não encontrado": espere uns
+  segundos e atualize a página — o sistema leva um instante para subir.
+• "Sumiu meu navegador": abra o navegador e digite à mão:
+  localhost:3000
+• Seus dados NÃO vão para a internet. Tudo fica no seu Mac.
+========================================================

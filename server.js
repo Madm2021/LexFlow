@@ -6,10 +6,10 @@ const os = require('os');
 const express = require('express');
 const multer = require('multer');
 
-const { importFilePath } = require('./src/importer');
-const store = require('./src/store');
-const auth = require('./src/auth');
-const { DB_PATH } = require('./src/db');
+const { importFilePath } = require('./importer');
+const store = require('./store');
+const auth = require('./auth');
+const { DB_PATH } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -76,7 +76,10 @@ if (auth.enabled()) {
   app.get('/logout', (req, res) => res.redirect('/'));
 }
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve apenas os arquivos do site (não o restante da pasta, p/ não expor o banco).
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/app.js', (req, res) => res.sendFile(path.join(__dirname, 'app.js')));
+app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 

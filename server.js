@@ -226,12 +226,18 @@ app.use((err, req, res, next) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`LexFlow rodando em http://localhost:${PORT}`);
     console.log(`Banco de dados: ${DB_PATH}`);
     try { store.ensureScoringVersion(); } catch (e) { console.error('ensureScoringVersion:', e.message); }
     ensureScoring(); // recalcula notas pendentes (jurimetria) em segundo plano
   });
+  // Uploads grandes e lentos (arquivos de centenas de MB, do Brasil até US West)
+  // podem passar do limite padrão de 5 min do Node e serem abortados ("Request
+  // aborted"). Damos margem larga para a requisição inteira concluir.
+  server.requestTimeout = 60 * 60 * 1000;   // 60 min para a requisição completa
+  server.headersTimeout = 10 * 60 * 1000;   // 10 min só para os cabeçalhos
+  server.keepAliveTimeout = 10 * 60 * 1000;
 }
 
 module.exports = app;

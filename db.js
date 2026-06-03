@@ -46,7 +46,14 @@ db.exec(`
   );
 `);
 
+// Colunas pré-calculadas para acelerar a Prospecção em bases grandes:
+// _potencial (nota de mérito) e _obito (0/1). São preenchidas em segundo plano.
+const tableCols = db.prepare('PRAGMA table_info(records)').all().map((c) => c.name);
+if (!tableCols.includes('_potencial')) db.exec('ALTER TABLE records ADD COLUMN _potencial INTEGER');
+if (!tableCols.includes('_obito')) db.exec('ALTER TABLE records ADD COLUMN _obito INTEGER');
+db.exec('CREATE INDEX IF NOT EXISTS idx_prospect ON records(_obito, _potencial)');
+
 // Colunas de controle que existem sempre (não vêm das planilhas).
-const META_COLUMNS = new Set(['_rowid', '_source_file', '_imported_at', '_hash']);
+const META_COLUMNS = new Set(['_rowid', '_source_file', '_imported_at', '_hash', '_potencial', '_obito']);
 
 module.exports = { db, DB_PATH, META_COLUMNS };

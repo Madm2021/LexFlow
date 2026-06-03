@@ -83,6 +83,21 @@ app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.c
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Calcula a nota (_potencial/_obito) dos registros pendentes em segundo plano,
+// em pequenos lotes, para não travar o servidor — usado em bases grandes.
+let scoringActive = false;
+function ensureScoring() {
+  if (scoringActive) return;
+  scoringActive = true;
+  const step = () => {
+    let changed = 0;
+    try { changed = store.scorePending(5000); } catch (e) { console.error('scorePending:', e.message); }
+    if (changed > 0) setTimeout(step, 40);
+    else scoringActive = false;
+  };
+  setTimeout(step, 100);
+}
+
 // --- Upload e importação (alimenta a lista única, ignorando duplicatas) ---
 app.post('/api/upload', upload.array('files'), wrap(async (req, res) => {
   if (!req.files || req.files.length === 0) {
@@ -99,6 +114,7 @@ app.post('/api/upload', upload.array('files'), wrap(async (req, res) => {
       fs.unlink(file.path, () => {});
     }
   }
+  ensureScoring(); // calcula a nota dos novos registros em segundo plano
   res.json({ imported, errors });
 }));
 
@@ -129,6 +145,26 @@ app.get('/api/records', (req, res) => {
 // --- Histórico de importações ---
 app.get('/api/imports', (req, res) => res.json(store.listImports()));
 
+// --- Prospecção (triagem de auxílio-acidente) ---
+app.get('/api/prospects', (req, res) => {
+  res.json(store.queryProspects({
+    limit: req.query.limit,
+    offset: req.query.offset,
+    q: req.query.q || '',
+    minScore: req.query.minScore != null ? req.query.minScore : 7,
+  }));
+});
+
+app.get('/api/prospects.csv', (req, res) => {
+  const csv = store.exportProspectsCsv({
+    q: (req.query.q || '').trim(),
+    minScore: req.query.minScore != null ? req.query.minScore : 7,
+  });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="lexflow_prospeccao.csv"');
+  res.send('﻿' + csv);
+});
+
 // --- Exportar a lista (ou o resultado de uma busca) em CSV ---
 app.get('/api/export.csv', (req, res) => {
   const q = (req.query.q || '').trim();
@@ -145,6 +181,10 @@ app.delete('/api/imports', (req, res) => {
   const removed = store.deleteBySource(file);
   res.json({ ok: true, removed });
 });
+
+// --- Casos sem indicação de sequela (contar / excluir) ---
+app.get('/api/no-sequela', (req, res) => res.json({ count: store.countNoSequela() }));
+app.delete('/api/no-sequela', (req, res) => res.json({ removed: store.deleteNoSequela() }));
 
 // --- Apagar tudo ---
 app.delete('/api/records', (req, res) => {
@@ -164,6 +204,7 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`LexFlow rodando em http://localhost:${PORT}`);
     console.log(`Banco de dados: ${DB_PATH}`);
+    ensureScoring(); // calcula notas pendentes (ex.: base já existente) ao subir
   });
 }
 

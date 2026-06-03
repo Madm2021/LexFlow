@@ -202,6 +202,11 @@ td .null { color: var(--muted); font-style: italic; }
   padding: 9px 0; border-bottom: 1px solid var(--border);
 }
 .import-row:last-child { border-bottom: none; }
+.maint-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--panel-2);
+}
 .imp-name { font-weight: 600; font-size: 14px; word-break: break-word; }
 .imp-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
 
@@ -211,3 +216,15 @@ td.origin { color: var(--muted); font-size: 12px; max-width: 240px; overflow: hi
 th:first-child, td:first-child { position: sticky; left: 0; background: var(--panel-2); z-index: 1; }
 tbody td:first-child { background: var(--panel); }
 tbody tr:hover td:first-child { background: var(--panel-2); }
+
+/* Prospecção */
+button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.prospect-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.prospect-head .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.prospect-actions { display: flex; gap: 10px; align-items: center; }
+.prospect-actions select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.pot-badge { display: inline-block; min-width: 26px; text-align: center; font-weight: 700; padding: 2px 8px; border-radius: 20px; font-size: 13px; }
+.pot-alta { background: rgba(63, 185, 80, 0.18); color: #56d364; border: 1px solid rgba(63, 185, 80, 0.5); }
+.pot-media { background: rgba(210, 160, 60, 0.18); color: #e3b341; border: 1px solid rgba(210, 160, 60, 0.5); }
+.pot-baixa { background: rgba(139, 155, 176, 0.15); color: var(--muted); border: 1px solid var(--border); }
+td.motivos { font-size: 12px; color: var(--muted); white-space: normal; min-width: 200px; }

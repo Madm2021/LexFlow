@@ -3,6 +3,18 @@
 const { db } = require('./db');
 const { MAPPING } = require('./mapping');
 
+// "Memória de cálculo" (cache): resultados pesados são guardados e só
+// recalculados quando os dados mudam (nova importação, limpeza, etc.).
+let dataVersion = 1;
+function bumpData() { dataVersion += 1; }
+const memo = {};
+function cached(key, fn) {
+  if (memo[key] && memo[key].v === dataVersion) return memo[key].value;
+  const value = fn();
+  memo[key] = { v: dataVersion, value };
+  return value;
+}
+
 /**
  * Retorna o catálogo de colunas (a união de colunas de todas as planilhas),
  * já na ordem de exibição.
@@ -50,16 +62,18 @@ function recordImport(sourceFile, sheetName, rowsAdded, rowsSkipped) {
   db.prepare(
     'INSERT INTO imports (source_file, sheet_name, rows_added, rows_skipped, imported_at) VALUES (?, ?, ?, ?, ?)',
   ).run(sourceFile, sheetName || null, rowsAdded, rowsSkipped, new Date().toISOString());
+  bumpData();
 }
 
 /**
- * Estatísticas globais para o topo da tela.
+ * Estatísticas globais para o topo da tela (em cache).
  */
 function getStats() {
-  const records = db.prepare('SELECT COUNT(*) AS n FROM records').get().n;
-  const columns = db.prepare('SELECT COUNT(*) AS n FROM columns').get().n;
-  const imports = db.prepare('SELECT COUNT(*) AS n FROM imports').get().n;
-  return { records, columns, imports };
+  return cached('stats', () => ({
+    records: db.prepare('SELECT COUNT(*) AS n FROM records').get().n,
+    columns: db.prepare('SELECT COUNT(*) AS n FROM columns').get().n,
+    imports: db.prepare('SELECT COUNT(*) AS n FROM imports').get().n,
+  }));
 }
 
 // Colunas pelas quais é permitido ordenar (catálogo + controle).
@@ -120,6 +134,7 @@ function listImports() {
 function deleteBySource(sourceFile) {
   const info = db.prepare('DELETE FROM records WHERE _source_file = ?').run(sourceFile);
   db.prepare('DELETE FROM imports WHERE source_file = ?').run(sourceFile);
+  bumpData();
   return info.changes;
 }
 
@@ -139,6 +154,7 @@ function clearAll() {
   });
   tx();
   columnCache = null;
+  bumpData();
 }
 
 /**
@@ -202,7 +218,10 @@ function cleanSelect() {
 function queryRecordsClean({ limit = 50, offset = 0, q = '', sort = null, dir = 'asc' } = {}) {
   const columns = getCleanColumns();
   const { clause, params } = buildCleanWhere(q);
-  const total = db.prepare(`SELECT COUNT(*) AS n FROM records ${clause}`).get(...params).n;
+  // Sem busca, o total é o mesmo sempre — usa cache (evita recontar 5M a cada clique).
+  const total = q
+    ? db.prepare(`SELECT COUNT(*) AS n FROM records ${clause}`).get(...params).n
+    : cached('total', () => db.prepare('SELECT COUNT(*) AS n FROM records').get().n);
 
   let orderBy = 'ORDER BY _rowid ASC';
   const direction = String(dir).toLowerCase() === 'desc' ? 'DESC' : 'ASC';
@@ -327,6 +346,7 @@ function scorePending(chunk = 5000) {
     `UPDATE records SET _potencial = ${e.score}, _obito = (CASE WHEN ${e.isObito} THEN 1 ELSE 0 END)
      WHERE _rowid IN (SELECT _rowid FROM records WHERE _potencial IS NULL LIMIT ${chunk})`,
   ).run();
+  if (info.changes > 0) bumpData(); // recalcular painel/contagens após indexar
   return info.changes;
 }
 function pendingCount() {
@@ -339,6 +359,7 @@ function countNoSequela() {
 }
 function deleteNoSequela() {
   const info = db.prepare(`DELETE FROM records WHERE NOT ${temSequelaSql()}`).run();
+  bumpData();
   return info.changes;
 }
 
@@ -411,8 +432,11 @@ function exportProspectsCsv({ q = '', minScore = 7 } = {}) {
   return lines.join('\r\n');
 }
 
-// Painel analítico (BI): números-chave e principais distribuições.
+// Painel analítico (BI): números-chave e principais distribuições (em cache).
 function dashboard() {
+  return cached('dashboard', () => computeDashboard());
+}
+function computeDashboard() {
   const e = prospectExprs();
   const total = db.prepare('SELECT COUNT(*) AS n FROM records').get().n;
   const candidatos = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _obito = 0 AND _potencial >= 7').get().n;

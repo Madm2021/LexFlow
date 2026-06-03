@@ -194,9 +194,11 @@ async function removeImport(file) {
 
 // --- Prospecção (triagem de auxílio-acidente) ---
 function scoreClass(p) {
-  if (p >= 85) return 'pot-alta';
-  if (p >= 70) return 'pot-media';
-  return 'pot-baixa';
+  if (p >= 85) return 'pot-muitoalta';
+  if (p >= 70) return 'pot-alta';
+  if (p >= 55) return 'pot-media';
+  if (p >= 40) return 'pot-baixa';
+  return 'pot-muitobaixa';
 }
 
 async function loadProspects() {

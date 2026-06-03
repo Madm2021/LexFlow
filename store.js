@@ -578,11 +578,13 @@ function computeDashboard() {
 
   // Faixas de potencial (usa a coluna indexada).
   const porNota = db.prepare('SELECT _potencial AS p, COUNT(*) AS n FROM records WHERE _potencial IS NOT NULL GROUP BY _potencial').all();
-  const faixas = { 'Alta (≥85%)': 0, 'Média (70-84%)': 0, 'Baixa (<70%)': 0 };
+  const faixas = { 'Muito alta (≥85%)': 0, 'Alta (70-84%)': 0, 'Média (55-69%)': 0, 'Baixa (40-54%)': 0, 'Muito baixa (<40%)': 0 };
   for (const r of porNota) {
-    if (r.p >= 85) faixas['Alta (≥85%)'] += r.n;
-    else if (r.p >= 70) faixas['Média (70-84%)'] += r.n;
-    else faixas['Baixa (<70%)'] += r.n;
+    if (r.p >= 85) faixas['Muito alta (≥85%)'] += r.n;
+    else if (r.p >= 70) faixas['Alta (70-84%)'] += r.n;
+    else if (r.p >= 55) faixas['Média (55-69%)'] += r.n;
+    else if (r.p >= 40) faixas['Baixa (40-54%)'] += r.n;
+    else faixas['Muito baixa (<40%)'] += r.n;
   }
 
   return {

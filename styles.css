@@ -224,9 +224,11 @@ button.active { background: var(--accent); color: #fff; border-color: var(--acce
 .prospect-actions { display: flex; gap: 10px; align-items: center; }
 .prospect-actions select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .pot-badge { display: inline-block; min-width: 26px; text-align: center; font-weight: 700; padding: 2px 8px; border-radius: 20px; font-size: 13px; }
-.pot-alta { background: rgba(63, 185, 80, 0.18); color: #56d364; border: 1px solid rgba(63, 185, 80, 0.5); }
+.pot-muitoalta { background: rgba(46, 160, 67, 0.28); color: #56d364; border: 1px solid rgba(63, 185, 80, 0.7); }
+.pot-alta { background: rgba(63, 185, 80, 0.16); color: #6fdc7e; border: 1px solid rgba(63, 185, 80, 0.45); }
 .pot-media { background: rgba(210, 160, 60, 0.18); color: #e3b341; border: 1px solid rgba(210, 160, 60, 0.5); }
-.pot-baixa { background: rgba(139, 155, 176, 0.15); color: var(--muted); border: 1px solid var(--border); }
+.pot-baixa { background: rgba(219, 138, 58, 0.18); color: #f0883e; border: 1px solid rgba(219, 138, 58, 0.5); }
+.pot-muitobaixa { background: rgba(248, 81, 73, 0.15); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.45); }
 td.motivos { font-size: 12px; color: var(--muted); white-space: normal; min-width: 200px; }
 .classe-tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
 .classe-muitoalta { background: rgba(63, 185, 80, 0.28); color: #6ee787; }

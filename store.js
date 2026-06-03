@@ -2,6 +2,10 @@
 
 const { db } = require('./db');
 const { MAPPING } = require('./mapping');
+const { lookupCid } = require('./cids');
+
+// Versão da lógica de pontuação. Ao mudar, a base é reprocessada (re-pontuada).
+const SCORING_VERSION = 'jurimetria-v3';
 
 // "Memória de cálculo" (cache): resultados pesados são guardados e só
 // recalculados quando os dados mudam (nova importação, limpeza, etc.).
@@ -314,8 +318,11 @@ function prospectExprs() {
   const obitoData = valOf(['data_obito', 'data_do_obito']);
   const isObito = `((${likeAny(obitoTxt, ['sim'])}) OR length(trim(${obitoData})) > 0)`;
 
+  const fil = valOf(['filiacao', 'filiacao_a_previdencia_social', 'filiacao_segurado']);
+  const apo = valOf(['aposentado']);
+
   // tel é só para exibição (coluna Telefone), não afeta a nota.
-  return { score, tel, mLesaoAlta, mLesaoMedia, mCid, mAfast, mParte, isObito };
+  return { score, tel, fil, apo, mLesaoAlta, mLesaoMedia, mCid, mAfast, mParte, isObito };
 }
 
 // Campos (do de-para) exibidos na lista de prospecção.
@@ -332,50 +339,113 @@ function textHasAny(text, kws) {
   const t = String(text == null ? '' : text).toLowerCase();
   return kws.some((k) => t.includes(k));
 }
+
+// Elegibilidade ao auxílio-acidente (relatório de mercado):
+// contribuinte individual e facultativo NÃO têm direito; aposentado perde o direito.
+function semDireitoFiliacao(filiacao) {
+  const t = String(filiacao == null ? '' : filiacao).toLowerCase();
+  return t.includes('contribuinte individual') || t.includes('facultativ');
+}
+function isAposentado(apo) {
+  const t = String(apo == null ? '' : apo).toLowerCase();
+  return /(^|[^a-zà-ú])sim/.test(t); // "Sim" (evita falso positivo em outras palavras)
+}
 function hasSequela(natLesao, cid) {
+  // Relevante se o CID consta na jurimetria OU se a lesão indica sequela.
+  if (lookupCid(cid)) return true;
   return textHasAny(natLesao, PROSPECT.lesaoAlta)
     || textHasAny(natLesao, PROSPECT.lesaoMedia)
     || textHasAny(cid, PROSPECT.cidGrave);
 }
 
-// Calcula _potencial/_obito para um lote de registros ainda não calculados.
-// Roda em segundo plano para não travar o servidor. Retorna quantos atualizou.
-function scorePending(chunk = 5000) {
+// Calcula a NOTA de um caso a partir da jurimetria do CID.
+// Nota = taxa de êxito (%) real do CID. Se o CID não está na base, usa uma
+// estimativa conservadora pela natureza da lesão e marca como não classificado.
+function scoreRow(cidText, natText) {
+  const info = lookupCid(cidText);
+  if (info && typeof info.taxa === 'number') {
+    return { potencial: Math.round(info.taxa), classificado: 1 };
+  }
+  // Reserva (heurística) para CIDs fora da base dos 640.
+  let base = 40;
+  if (textHasAny(natText, PROSPECT.lesaoAlta)) base = 65;
+  else if (textHasAny(natText, PROSPECT.lesaoMedia)) base = 60;
+  return { potencial: base, classificado: 0 };
+}
+
+// Helpers da tabela meta (versão de pontuação etc.).
+function getMeta(key) {
+  const r = db.prepare('SELECT value FROM meta WHERE key = ?').get(key);
+  return r ? r.value : null;
+}
+function setMeta(key, value) {
+  db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value));
+}
+
+// Se a lógica de pontuação mudou, zera as notas para serem recalculadas.
+function ensureScoringVersion() {
+  if (getMeta('scoring_version') !== SCORING_VERSION) {
+    db.exec('UPDATE records SET _potencial = NULL');
+    setMeta('scoring_version', SCORING_VERSION);
+    bumpData();
+  }
+}
+
+// Calcula _potencial/_obito/_classificado de um lote ainda não calculado.
+// Roda em segundo plano (em JS, usando a jurimetria). Retorna quantos atualizou.
+function scorePending(chunk = 4000) {
+  const cid = fieldVal('cid_10');
+  const nat = fieldVal('nat_lesao');
   const e = prospectExprs();
-  const info = db.prepare(
-    `UPDATE records SET _potencial = ${e.score}, _obito = (CASE WHEN ${e.isObito} THEN 1 ELSE 0 END)
-     WHERE _rowid IN (SELECT _rowid FROM records WHERE _potencial IS NULL LIMIT ${chunk})`,
-  ).run();
-  if (info.changes > 0) bumpData(); // recalcular painel/contagens após indexar
-  return info.changes;
+  const rows = db.prepare(
+    `SELECT _rowid, ${cid} AS cid, ${nat} AS nat, ${e.fil} AS fil, ${e.apo} AS apo,
+            (CASE WHEN ${e.isObito} THEN 1 ELSE 0 END) AS obito
+     FROM records WHERE _potencial IS NULL LIMIT ${chunk}`,
+  ).all();
+  if (rows.length === 0) return 0;
+  const upd = db.prepare('UPDATE records SET _potencial = ?, _obito = ?, _classificado = ?, _excluir = ? WHERE _rowid = ?');
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      const s = scoreRow(r.cid, r.nat);
+      // Inelegível: óbito, sem direito (contrib. individual/facultativo) ou aposentado.
+      const excluir = (r.obito || semDireitoFiliacao(r.fil) || isAposentado(r.apo)) ? 1 : 0;
+      upd.run(s.potencial, r.obito, s.classificado, excluir, r._rowid);
+    }
+  });
+  tx();
+  bumpData();
+  return rows.length;
 }
 function pendingCount() {
   return db.prepare('SELECT COUNT(*) AS n FROM records WHERE _potencial IS NULL').get().n;
 }
 
-// Contagem e exclusão de casos SEM indicação de sequela.
+// "Sem sequela" = CID não classificado na jurimetria E sem palavra-chave de lesão.
+function noSequelaWhere() {
+  return `(COALESCE(_classificado, 0) = 0 AND NOT ${temSequelaSql()})`;
+}
 function countNoSequela() {
-  return db.prepare(`SELECT COUNT(*) AS n FROM records WHERE NOT ${temSequelaSql()}`).get().n;
+  return db.prepare(`SELECT COUNT(*) AS n FROM records WHERE ${noSequelaWhere()}`).get().n;
 }
 function deleteNoSequela() {
-  const info = db.prepare(`DELETE FROM records WHERE NOT ${temSequelaSql()}`).run();
+  const info = db.prepare(`DELETE FROM records WHERE ${noSequelaWhere()}`).run();
   bumpData();
   return info.changes;
 }
 
-function queryProspects({ limit = 50, offset = 0, q = '', minScore = 7 } = {}) {
+function queryProspects({ limit = 50, offset = 0, q = '', minScore = 70 } = {}) {
   const e = prospectExprs();
   const select = [
-    '_rowid', '_source_file',
+    '_rowid', '_source_file', '_classificado',
     '_potencial AS potencial',
     `${e.tel} AS telefone`,
-    `${e.mLesaoAlta} AS m_lesao_alta`, `${e.mLesaoMedia} AS m_lesao_media`, `${e.mCid} AS m_cid`,
-    `${e.mAfast} AS m_afast`, `${e.mParte} AS m_parte`,
+    `${e.mAfast} AS m_afast`,
     ...PROSPECT_FIELDS.map((k) => `${fieldVal(k)} AS "${k}"`),
   ].join(', ');
 
   // Usa as colunas pré-calculadas (com índice) — rápido mesmo com milhões.
-  const where = ['_obito = 0', '_potencial >= ?'];
+  // _excluir cobre óbito + sem direito (filiação) + aposentado.
+  const where = ['COALESCE(_excluir, _obito, 0) = 0', '_potencial >= ?'];
   const params = [Number(minScore) || 0];
   if (q) {
     const cols = ['nome', 'cat', 'cid_10', 'nat_lesao', 'parte_corpo', 'municipio_funcionario'];
@@ -392,23 +462,30 @@ function queryProspects({ limit = 50, offset = 0, q = '', minScore = 7 } = {}) {
     .prepare(`SELECT ${select} FROM records ${whereSql} ORDER BY _potencial DESC, _rowid ASC LIMIT ? OFFSET ?`)
     .all(...params, safeLimit, safeOffset);
 
-  // Monta os "motivos" legíveis a partir dos sinais.
+  // Enriquece cada linha com a jurimetria do CID.
   for (const r of rows) {
+    const info = lookupCid(r.cid_10);
+    r.classe = info ? info.classe : 'Não classif.';
+    r.taxa = info && typeof info.taxa === 'number' ? Math.round(info.taxa * 10) / 10 : null;
+    r.exigencia = info ? info.exig : '';
+    r.decisoes = info && info.fav != null && info.total != null ? `${info.fav}/${info.total}` : '';
+    r.doc_reforcada = info ? (info.docref || '') : '';
+    r.tribunais = info ? (info.tribunais || '') : '';
+    r.obs = info ? (info.obs || '') : '';
     const motivos = [];
-    if (r.m_lesao_alta) motivos.push('Lesão grave (amputação/perda)');
-    else if (r.m_lesao_media) motivos.push('Lesão (fratura/luxação)');
-    if (r.m_cid) motivos.push('CID de lesão grave');
-    if (r.m_afast) motivos.push('Houve afastamento');
-    if (r.m_parte) motivos.push('Parte do corpo-chave');
+    if (info) {
+      const dec = r.decisoes ? ` (${r.decisoes} decisões)` : '';
+      motivos.push(`${r.classe} · ${r.taxa}% êxito${dec}`);
+    } else motivos.push('CID não classificado — revisar');
+    if (r.m_afast) motivos.push('afastamento');
     r.motivos = motivos;
-    delete r.m_lesao_alta; delete r.m_lesao_media; delete r.m_cid;
-    delete r.m_afast; delete r.m_parte;
+    delete r.m_afast;
   }
 
   return { rows, total, limit: safeLimit, offset: safeOffset, minScore: Number(minScore) || 0, pending: pendingCount() };
 }
 
-function exportProspectsCsv({ q = '', minScore = 7 } = {}) {
+function exportProspectsCsv({ q = '', minScore = 70 } = {}) {
   const all = queryProspects({ q, minScore, limit: 500, offset: 0 });
   // Reúne todas as páginas.
   const total = all.total;
@@ -424,10 +501,10 @@ function exportProspectsCsv({ q = '', minScore = 7 } = {}) {
     const s = String(v);
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const header = ['Potencial', 'Motivos', 'Telefone', ...PROSPECT_FIELDS.map((k) => labels[k]), 'Origem'];
+  const header = ['Potencial (%)', 'Classe', 'Taxa êxito (%)', 'Decisões (fav/total)', 'Exigência documental', 'Documentação reforçada', 'Tribunais', 'Observações estratégicas', 'Telefone', ...PROSPECT_FIELDS.map((k) => labels[k]), 'Origem'];
   const lines = [header.map(escape).join(',')];
   for (const r of rows) {
-    lines.push([r.potencial, r.motivos.join(' | '), r.telefone, ...PROSPECT_FIELDS.map((k) => r[k]), r._source_file].map(escape).join(','));
+    lines.push([r.potencial, r.classe, r.taxa, r.decisoes, r.exigencia, r.doc_reforcada, r.tribunais, r.obs, r.telefone, ...PROSPECT_FIELDS.map((k) => r[k]), r._source_file].map(escape).join(','));
   }
   return lines.join('\r\n');
 }
@@ -439,8 +516,9 @@ function dashboard() {
 function computeDashboard() {
   const e = prospectExprs();
   const total = db.prepare('SELECT COUNT(*) AS n FROM records').get().n;
-  const candidatos = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _obito = 0 AND _potencial >= 7').get().n;
+  const candidatos = db.prepare('SELECT COUNT(*) AS n FROM records WHERE COALESCE(_excluir, _obito, 0) = 0 AND _potencial >= 70').get().n;
   const obitos = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _obito = 1').get().n;
+  const inelegiveis = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _excluir = 1 AND COALESCE(_obito,0) = 0').get().n;
   const comTelefone = db.prepare(`SELECT COUNT(*) AS n FROM records WHERE length(trim(${e.tel})) > 0`).get().n;
   const semSequela = countNoSequela();
   const pending = pendingCount();
@@ -452,16 +530,15 @@ function computeDashboard() {
 
   // Faixas de potencial (usa a coluna indexada).
   const porNota = db.prepare('SELECT _potencial AS p, COUNT(*) AS n FROM records WHERE _potencial IS NOT NULL GROUP BY _potencial').all();
-  const faixas = { 'Alto (9-10)': 0, 'Médio (6-8)': 0, 'Baixo (1-5)': 0, 'Sem sinais (0)': 0 };
+  const faixas = { 'Alta (≥85%)': 0, 'Média (70-84%)': 0, 'Baixa (<70%)': 0 };
   for (const r of porNota) {
-    if (r.p >= 9) faixas['Alto (9-10)'] += r.n;
-    else if (r.p >= 6) faixas['Médio (6-8)'] += r.n;
-    else if (r.p >= 1) faixas['Baixo (1-5)'] += r.n;
-    else faixas['Sem sinais (0)'] += r.n;
+    if (r.p >= 85) faixas['Alta (≥85%)'] += r.n;
+    else if (r.p >= 70) faixas['Média (70-84%)'] += r.n;
+    else faixas['Baixa (<70%)'] += r.n;
   }
 
   return {
-    totals: { total, comSequela: total - semSequela, semSequela, candidatos, obitos, comTelefone, pending },
+    totals: { total, comSequela: total - semSequela, semSequela, candidatos, obitos, inelegiveis, comTelefone, pending },
     faixas: Object.entries(faixas).map(([label, n]) => ({ label, n })),
     porUF: topBy(fieldVal('estado_funcionario'), 15),
     porParte: topBy(fieldVal('parte_corpo'), 10),
@@ -487,6 +564,7 @@ module.exports = {
   queryProspects,
   exportProspectsCsv,
   scorePending,
+  ensureScoringVersion,
   pendingCount,
   countNoSequela,
   deleteNoSequela,

@@ -154,14 +154,14 @@ app.get('/api/prospects', (req, res) => {
     limit: req.query.limit,
     offset: req.query.offset,
     q: req.query.q || '',
-    minScore: req.query.minScore != null ? req.query.minScore : 7,
+    minScore: req.query.minScore != null ? req.query.minScore : 70,
   }));
 });
 
 app.get('/api/prospects.csv', (req, res) => {
   const csv = store.exportProspectsCsv({
     q: (req.query.q || '').trim(),
-    minScore: req.query.minScore != null ? req.query.minScore : 7,
+    minScore: req.query.minScore != null ? req.query.minScore : 70,
   });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lexflow_prospeccao.csv"');
@@ -207,7 +207,8 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`LexFlow rodando em http://localhost:${PORT}`);
     console.log(`Banco de dados: ${DB_PATH}`);
-    ensureScoring(); // calcula notas pendentes (ex.: base já existente) ao subir
+    try { store.ensureScoringVersion(); } catch (e) { console.error('ensureScoringVersion:', e.message); }
+    ensureScoring(); // recalcula notas pendentes (jurimetria) em segundo plano
   });
 }
 

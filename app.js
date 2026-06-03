@@ -1,6 +1,6 @@
 'use strict';
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', view: 'clean', mode: 'list', minScore: 7 };
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', view: 'clean', mode: 'list', minScore: 70 };
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
@@ -194,8 +194,8 @@ async function removeImport(file) {
 
 // --- Prospecção (triagem de auxílio-acidente) ---
 function scoreClass(p) {
-  if (p >= 9) return 'pot-alta';
-  if (p >= 6) return 'pot-media';
+  if (p >= 85) return 'pot-alta';
+  if (p >= 70) return 'pot-media';
   return 'pot-baixa';
 }
 
@@ -216,15 +216,15 @@ async function loadProspects() {
   const head = el('div', { class: 'prospect-head' }, [
     el('div', {}, [
       el('strong', { text: '🎯 Prospecção — auxílio-acidente' }),
-      el('div', { class: 'sub', text: `${fmt(total)} candidato(s)${state.q ? ` para "${state.q}"` : ''} · óbitos excluídos` }),
+      el('div', { class: 'sub', text: `${fmt(total)} candidato(s)${state.q ? ` para "${state.q}"` : ''} · excluídos: óbitos, aposentados e sem direito (contrib. individual/facultativo)` }),
       data.pending > 0 ? el('div', { class: 'sub', text: `⏳ Indexando ${fmt(data.pending)} registro(s)... a contagem ainda vai aumentar. Recarregue em instantes.` }) : null,
     ]),
     el('div', { class: 'prospect-actions' }, [
       el('label', { text: 'Rigor: ' }, [
         (() => {
           const sel = el('select', { onChange: (ev) => { state.minScore = Number(ev.target.value); state.offset = 0; loadProspects(); } });
-          [['5', 'Mais amplo'], ['7', 'Médio'], ['9', 'Mais rigoroso']].forEach(([v, t]) => {
-            const o = el('option', { value: v, text: `${t} (${v}+)` });
+          [['90', 'Muito alta (≥90%)'], ['80', 'Alta (≥80%)'], ['70', 'Média (≥70%)'], ['1', 'Todos']].forEach(([v, t]) => {
+            const o = el('option', { value: v, text: t });
             if (Number(v) === state.minScore) o.selected = true;
             sel.appendChild(o);
           });
@@ -236,15 +236,16 @@ async function loadProspects() {
   ]);
 
   const cols = [
-    ['potencial', 'Potencial'], ['motivos', 'Por quê'], ['telefone', 'Telefone'], ['nome', 'Nome'],
-    ['cid_10', 'CID-10'], ['nat_lesao', 'Nat. Lesão'], ['parte_corpo', 'Parte do Corpo'],
+    ['potencial', '% Êxito'], ['classe', 'Classe'], ['motivos', 'Por quê'], ['telefone', 'Telefone'], ['nome', 'Nome'],
+    ['cid_10', 'CID-10'], ['nat_lesao', 'Nat. Lesão'], ['exigencia', 'Exigência documental'],
     ['municipio_funcionario', 'Município'], ['estado_funcionario', 'UF'], ['cat', 'CAT'],
   ];
   const thead = el('thead', {}, [el('tr', {}, cols.map(([, label]) => el('th', { text: label })))]);
   const tbody = el('tbody', {}, rows.map((r) => el('tr', {}, cols.map(([key]) => {
     if (key === 'potencial') {
-      return el('td', {}, [el('span', { class: `pot-badge ${scoreClass(r.potencial)}`, text: String(r.potencial) })]);
+      return el('td', {}, [el('span', { class: `pot-badge ${scoreClass(r.potencial)}`, text: r.potencial + '%' })]);
     }
+    if (key === 'classe') return el('td', {}, [el('span', { class: `classe-tag classe-${(r.classe || '').toLowerCase().replace(/[^a-z]/g, '')}`, text: r.classe || '—' })]);
     if (key === 'motivos') return el('td', { class: 'motivos', text: (r.motivos || []).join(' · ') });
     const v = r[key];
     const td = el('td', {});
@@ -292,9 +293,10 @@ async function loadDashboard() {
   const cards = el('div', { class: 'cards' }, [
     card('Registros', fmt(t.total)),
     card('Com sequela', fmt(t.comSequela)),
-    card('Candidatos (nota ≥ 7)', fmt(t.candidatos)),
+    card('Candidatos (≥ 70%)', fmt(t.candidatos)),
     card('Com telefone', fmt(t.comTelefone)),
     card('Óbitos', fmt(t.obitos)),
+    card('Inelegíveis', fmt(t.inelegiveis || 0)),
   ]);
   const parts = [el('h3', { text: '📊 Painel analítico' }), cards];
   if (t.pending > 0) parts.push(el('div', { class: 'sub', text: `⏳ Indexando ${fmt(t.pending)} registro(s)... alguns números ainda vão se ajustar.` }));

@@ -228,6 +228,13 @@ button.active { background: var(--accent); color: #fff; border-color: var(--acce
 .pot-media { background: rgba(210, 160, 60, 0.18); color: #e3b341; border: 1px solid rgba(210, 160, 60, 0.5); }
 .pot-baixa { background: rgba(139, 155, 176, 0.15); color: var(--muted); border: 1px solid var(--border); }
 td.motivos { font-size: 12px; color: var(--muted); white-space: normal; min-width: 200px; }
+.classe-tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.classe-muitoalta { background: rgba(63, 185, 80, 0.28); color: #6ee787; }
+.classe-alta { background: rgba(63, 185, 80, 0.16); color: #56d364; }
+.classe-média, .classe-media { background: rgba(210, 160, 60, 0.18); color: #e3b341; }
+.classe-baixa { background: rgba(229, 83, 75, 0.16); color: #f0837d; }
+.classe-muitobaixa { background: rgba(229, 83, 75, 0.26); color: #ff9a93; }
+.classe-naoclassif { background: rgba(139, 155, 176, 0.15); color: var(--muted); }
 
 /* Painel (BI) */
 .cards { display: flex; gap: 14px; flex-wrap: wrap; margin: 14px 0 18px; }

@@ -47,13 +47,22 @@ db.exec(`
 `);
 
 // Colunas pré-calculadas para acelerar a Prospecção em bases grandes:
-// _potencial (nota de mérito) e _obito (0/1). São preenchidas em segundo plano.
+// _potencial (nota = taxa de êxito), _obito (0/1) e _classificado (CID consta na
+// base de jurimetria? 0/1). São preenchidas em segundo plano.
 const tableCols = db.prepare('PRAGMA table_info(records)').all().map((c) => c.name);
 if (!tableCols.includes('_potencial')) db.exec('ALTER TABLE records ADD COLUMN _potencial INTEGER');
 if (!tableCols.includes('_obito')) db.exec('ALTER TABLE records ADD COLUMN _obito INTEGER');
+if (!tableCols.includes('_classificado')) db.exec('ALTER TABLE records ADD COLUMN _classificado INTEGER');
+// _excluir = 1 quando o caso não deve aparecer na prospecção (óbito, ou sem
+// direito: contribuinte individual/facultativo, ou aposentado).
+if (!tableCols.includes('_excluir')) db.exec('ALTER TABLE records ADD COLUMN _excluir INTEGER');
 db.exec('CREATE INDEX IF NOT EXISTS idx_prospect ON records(_obito, _potencial)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_prospect2 ON records(_excluir, _potencial)');
+
+// Tabela de metadados internos (ex.: versão da lógica de pontuação).
+db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
 
 // Colunas de controle que existem sempre (não vêm das planilhas).
-const META_COLUMNS = new Set(['_rowid', '_source_file', '_imported_at', '_hash', '_potencial', '_obito']);
+const META_COLUMNS = new Set(['_rowid', '_source_file', '_imported_at', '_hash', '_potencial', '_obito', '_classificado', '_excluir']);
 
 module.exports = { db, DB_PATH, META_COLUMNS };

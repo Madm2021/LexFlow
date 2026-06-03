@@ -9,7 +9,7 @@ const multer = require('multer');
 const { importFilePath } = require('./importer');
 const store = require('./store');
 const auth = require('./auth');
-const { DB_PATH } = require('./db');
+const { db, DB_PATH } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -86,10 +86,13 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 // Calcula a nota (_potencial/_obito) dos registros pendentes em segundo plano,
 // em pequenos lotes, para não travar o servidor — usado em bases grandes.
 let scoringActive = false;
+let importing = false; // pausa a pontuação enquanto há upload em andamento
 function ensureScoring() {
   if (scoringActive) return;
   scoringActive = true;
   const step = () => {
+    // Enquanto importa, não disputa o banco com a pontuação — só aguarda.
+    if (importing) { setTimeout(step, 500); return; }
     let changed = 0;
     try { changed = store.scorePending(5000); } catch (e) { console.error('scorePending:', e.message); }
     if (changed > 0) { setTimeout(step, 40); return; }
@@ -110,14 +113,21 @@ app.post('/api/upload', upload.array('files'), wrap(async (req, res) => {
   }
   const imported = [];
   const errors = [];
-  for (const file of req.files) {
-    try {
-      imported.push(await importFilePath(file.path, file.originalname));
-    } catch (err) {
-      errors.push({ file: file.originalname, error: err.message });
-    } finally {
-      fs.unlink(file.path, () => {});
+  importing = true; // pausa a pontuação em 2º plano durante a importação
+  try {
+    for (const file of req.files) {
+      try {
+        imported.push(await importFilePath(file.path, file.originalname));
+      } catch (err) {
+        errors.push({ file: file.originalname, error: err.message });
+      } finally {
+        fs.unlink(file.path, () => {});
+      }
     }
+  } finally {
+    importing = false;
+    // Consolida o WAL no banco e libera espaço após o lote de importação.
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { console.error('checkpoint:', e.message); }
   }
   ensureScoring(); // calcula a nota dos novos registros em segundo plano
   res.json({ imported, errors });

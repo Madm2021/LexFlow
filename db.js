@@ -10,7 +10,23 @@ const DB_PATH = process.env.LEXFLOW_DB || path.join(__dirname, 'data', 'lexflow.
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const db = new Database(DB_PATH);
+// Ajustes de desempenho para importar milhões de linhas sem ficar lento:
+// - WAL + synchronous=NORMAL: seguro (não corrompe) e muito mais rápido para
+//   gravar lotes, pois evita um fsync a cada transação (importante no volume
+//   de rede do Railway).
+// - cache_size negativo = KB: 2 GB de cache de páginas mantêm o índice de
+//   duplicidade (_hash) inteiro "quente" na memória — esse índice é o que mais
+//   pesa conforme a base cresce. Dimensionado para o serviço com 24 GB de RAM;
+//   o SQLite só usa de fato o que precisar (cresce sob demanda).
+// - mmap_size: 8 GB do banco mapeados em memória, acelerando muito a leitura.
+// - temp_store=MEMORY: ordenações/temporárias na RAM em vez de disco.
+// Para servidores com pouca RAM (≤1 GB), reduza cache_size para -98304 (96 MB)
+// e mmap_size para 268435456 (256 MB).
 db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('temp_store = MEMORY');
+db.pragma('cache_size = -2097152');
+db.pragma('mmap_size = 8589934592');
 
 // Modelo unificado: TODAS as planilhas alimentam uma única tabela "records".
 // - "columns" é o catálogo da união de colunas vistas em todos os arquivos.

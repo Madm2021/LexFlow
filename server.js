@@ -16,11 +16,11 @@ const PORT = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 // Upload em disco (arquivo temporário): suporta arquivos grandes sem estourar
-// a memória. Até 200 MB por arquivo, vários arquivos por vez.
+// a memória. Até 2 GB por arquivo, vários arquivos por vez.
 const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lexflow-uploads-'));
 const upload = multer({
   dest: uploadDir,
-  limits: { fileSize: 200 * 1024 * 1024, files: 20 },
+  limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 20 },
 });
 
 app.use(express.json());

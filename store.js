@@ -206,11 +206,36 @@ function getCleanColumns() {
   return MAPPING.map((f) => ({ column_name: f.key, original_name: f.label, data_type: 'text' }));
 }
 
+// Padroniza CPF: recupera zeros à esquerda (todo CPF tem 11 dígitos) e formata
+// como 000.000.000-00. Campo vazio continua vazio; valores com >11 dígitos
+// (CNPJ ou dado misturado) ficam intactos.
+function formatCPF(v) {
+  if (v == null) return v;
+  const s = String(v).trim();
+  if (s === '') return v;
+  const d = s.replace(/\D/g, '');
+  if (d.length === 0 || d.length > 11) return s;
+  const p = d.padStart(11, '0');
+  return `${p.slice(0, 3)}.${p.slice(3, 6)}.${p.slice(6, 9)}-${p.slice(9)}`;
+}
+
 function buildCleanWhere(q) {
   if (!q) return { clause: '', params: [] };
-  const exprs = MAPPING.map((f) => `${cleanExpr(f)} LIKE ? COLLATE NOCASE`);
-  exprs.push('CAST("_source_file" AS TEXT) LIKE ? COLLATE NOCASE');
-  return { clause: 'WHERE ' + exprs.join(' OR '), params: exprs.map(() => `%${q}%`) };
+  const conds = [];
+  const params = [];
+  const digits = q.replace(/\D/g, '');
+  for (const f of MAPPING) {
+    conds.push(`${cleanExpr(f)} LIKE ? COLLATE NOCASE`);
+    params.push(`%${q}%`);
+    // CPF: busca robusta por dígitos (acha '355.237.088-95' e '35523708895').
+    if (f.key === 'cpf' && digits) {
+      conds.push(`replace(replace(replace(${cleanExpr(f)}, '.', ''), '-', ''), ' ', '') LIKE ?`);
+      params.push(`%${digits}%`);
+    }
+  }
+  conds.push('CAST("_source_file" AS TEXT) LIKE ? COLLATE NOCASE');
+  params.push(`%${q}%`);
+  return { clause: 'WHERE ' + conds.join(' OR '), params };
 }
 
 function cleanSelect() {
@@ -240,6 +265,8 @@ function queryRecordsClean({ limit = 50, offset = 0, q = '', sort = null, dir = 
     .prepare(`SELECT ${cleanSelect()} FROM records ${clause} ${orderBy} LIMIT ? OFFSET ?`)
     .all(...params, safeLimit, safeOffset);
 
+  for (const r of rows) if ('cpf' in r) r.cpf = formatCPF(r.cpf);
+
   return { columns, rows, total, limit: safeLimit, offset: safeOffset, view: 'clean' };
 }
 
@@ -255,7 +282,7 @@ function exportCsvClean(q = '') {
   };
   const lines = [['Origem', ...columns.map((c) => c.original_name)].map(escape).join(',')];
   for (const row of rows) {
-    lines.push([row._source_file, ...columns.map((c) => row[c.column_name])].map(escape).join(','));
+    lines.push([row._source_file, ...columns.map((c) => (c.column_name === 'cpf' ? formatCPF(row[c.column_name]) : row[c.column_name]))].map(escape).join(','));
   }
   return lines.join('\r\n');
 }
@@ -420,6 +447,27 @@ function pendingCount() {
   return db.prepare('SELECT COUNT(*) AS n FROM records WHERE _potencial IS NULL').get().n;
 }
 
+// Normaliza o CPF gravado em lotes (recupera zeros à esquerda + formata).
+// Usa um cursor por _rowid em meta — resumível e cobre também novos imports
+// (linhas com _rowid maior são processadas nas próximas execuções). Vazios
+// continuam vazios. Retorna quantas linhas processou neste lote.
+function cpfBackfillPending(chunk = 5000) {
+  if (!columnSet().has('cpf')) return 0;
+  const cursor = Number(getMeta('cpf_cursor') || 0);
+  const rows = db.prepare('SELECT _rowid, cpf FROM records WHERE _rowid > ? ORDER BY _rowid LIMIT ?').all(cursor, chunk);
+  if (rows.length === 0) return 0;
+  const upd = db.prepare('UPDATE records SET cpf = ? WHERE _rowid = ?');
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      const f = formatCPF(r.cpf);
+      if (f !== r.cpf) upd.run(f, r._rowid);
+    }
+  });
+  tx();
+  setMeta('cpf_cursor', String(rows[rows.length - 1]._rowid));
+  return rows.length;
+}
+
 // "Sem sequela" = CID não classificado na jurimetria E sem palavra-chave de lesão.
 function noSequelaWhere() {
   return `(COALESCE(_classificado, 0) = 0 AND NOT ${temSequelaSql()})`;
@@ -566,6 +614,8 @@ module.exports = {
   scorePending,
   ensureScoringVersion,
   pendingCount,
+  cpfBackfillPending,
+  formatCPF,
   countNoSequela,
   deleteNoSequela,
   hasSequela,

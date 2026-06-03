@@ -92,7 +92,12 @@ function ensureScoring() {
   const step = () => {
     let changed = 0;
     try { changed = store.scorePending(5000); } catch (e) { console.error('scorePending:', e.message); }
-    if (changed > 0) setTimeout(step, 40);
+    if (changed > 0) { setTimeout(step, 40); return; }
+    // Pontuação concluída: normaliza os CPFs gravados (em 2º plano, sem competir
+    // com a indexação). Cursor por _rowid também cobre futuros imports.
+    let cpf = 0;
+    try { cpf = store.cpfBackfillPending(5000); } catch (e) { console.error('cpfBackfill:', e.message); }
+    if (cpf > 0) setTimeout(step, 40);
     else scoringActive = false;
   };
   setTimeout(step, 100);

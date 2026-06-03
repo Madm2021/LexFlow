@@ -170,6 +170,7 @@ app.get('/api/prospects', (req, res) => {
     offset: req.query.offset,
     q: req.query.q || '',
     minScore: req.query.minScore != null ? req.query.minScore : 70,
+    maxScore: req.query.maxScore != null ? req.query.maxScore : null,
   }));
 });
 
@@ -177,6 +178,7 @@ app.get('/api/prospects.csv', (req, res) => {
   const csv = store.exportProspectsCsv({
     q: (req.query.q || '').trim(),
     minScore: req.query.minScore != null ? req.query.minScore : 70,
+    maxScore: req.query.maxScore != null ? req.query.maxScore : null,
   });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lexflow_prospeccao.csv"');
@@ -203,6 +205,11 @@ app.delete('/api/imports', (req, res) => {
 // --- Casos sem indicação de sequela (contar / excluir) ---
 app.get('/api/no-sequela', (req, res) => res.json({ count: store.countNoSequela() }));
 app.delete('/api/no-sequela', (req, res) => res.json({ removed: store.deleteNoSequela() }));
+
+// --- Deduplicação por CPF (contar / executar) ---
+// Mantém só o melhor caso (maior potencial) de cada CPF e remove os repetidos.
+app.get('/api/dedupe-cpf', (req, res) => res.json({ count: store.countCpfDuplicates() }));
+app.delete('/api/dedupe-cpf', (req, res) => res.json({ removed: store.dedupeByCpf() }));
 
 // --- Apagar tudo ---
 app.delete('/api/records', (req, res) => {

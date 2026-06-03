@@ -1,6 +1,6 @@
 'use strict';
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', view: 'clean', mode: 'list', minScore: 70 };
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', view: 'clean', mode: 'list', minScore: 85, maxScore: null };
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
@@ -154,6 +154,16 @@ async function toggleImports() {
     ]);
     panel.appendChild(maint);
 
+    // Manutenção: deduplicar por CPF (mantém o melhor caso de cada pessoa).
+    const maintCpf = el('div', { class: 'maint-row' }, [
+      el('div', {}, [
+        el('strong', { text: '🆔 Deduplicar por CPF' }),
+        el('div', { class: 'imp-meta', text: 'Mantém só o caso de maior potencial (melhor sequela) por CPF e remove os repetidos. Rode após a formatação dos CPFs terminar.' }),
+      ]),
+      el('button', { class: 'ghost small', text: 'Verificar e deduplicar', onClick: dedupeByCpf }),
+    ]);
+    panel.appendChild(maintCpf);
+
     if (list.length === 0) { panel.appendChild(el('p', { class: 'spinner', text: 'Nenhuma planilha importada ainda.' })); return; }
     panel.appendChild(el('h3', { text: 'Planilhas importadas' }));
     list.forEach((imp) => {
@@ -176,6 +186,20 @@ async function cleanupNoSequela() {
     if (!ok) return;
     const r = await api('/api/no-sequela', { method: 'DELETE' });
     toast(`${fmt(r.removed)} caso(s) sem sequela removido(s).`, 'ok');
+    await Promise.all([loadStats(), refresh()]);
+    $('#imports-panel').hidden = true;
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function dedupeByCpf() {
+  try {
+    const { count } = await api('/api/dedupe-cpf');
+    if (count === 0) { toast('Nenhum CPF duplicado encontrado (entre CPFs completos). 👍', 'ok'); return; }
+    const ok = confirm(`Foram encontrados ${fmt(count)} registro(s) repetido(s) por CPF.\n\nManter apenas o caso de MAIOR potencial (melhor sequela) de cada CPF e EXCLUIR os ${fmt(count)} repetidos?\n\n⚠️ Rode só depois que a formatação dos CPFs tiver terminado. Em bases grandes pode levar um tempo e a tela fica travada durante o processo. Esta ação não pode ser desfeita.`);
+    if (!ok) return;
+    toast('Deduplicando por CPF... pode levar um tempo. Aguarde.', '');
+    const r = await api('/api/dedupe-cpf', { method: 'DELETE' });
+    toast(`${fmt(r.removed)} registro(s) repetido(s) removido(s).`, 'ok');
     await Promise.all([loadStats(), refresh()]);
     $('#imports-panel').hidden = true;
   } catch (e) { toast(e.message, 'err'); }
@@ -205,6 +229,7 @@ async function loadProspects() {
   const viewer = $('#viewer');
   viewer.innerHTML = '<div class="spinner">Analisando casos...</div>';
   const params = new URLSearchParams({ limit: state.limit, offset: state.offset, q: state.q, minScore: state.minScore });
+  if (state.maxScore != null) params.set('maxScore', state.maxScore);
 
   let data;
   try { data = await api(`/api/prospects?${params}`); }
@@ -212,8 +237,9 @@ async function loadProspects() {
 
   const { rows, total, limit, offset } = data;
 
-  // Cabeçalho com seletor de rigor e exportação.
+  // Cabeçalho com seletor de faixa e exportação.
   const exp = new URLSearchParams({ minScore: state.minScore });
+  if (state.maxScore != null) exp.set('maxScore', state.maxScore);
   if (state.q) exp.set('q', state.q);
   const head = el('div', { class: 'prospect-head' }, [
     el('div', {}, [
@@ -222,12 +248,24 @@ async function loadProspects() {
       data.pending > 0 ? el('div', { class: 'sub', text: `⏳ Indexando ${fmt(data.pending)} registro(s)... a contagem ainda vai aumentar. Recarregue em instantes.` }) : null,
     ]),
     el('div', { class: 'prospect-actions' }, [
-      el('label', { text: 'Rigor: ' }, [
+      el('label', { text: 'Faixa: ' }, [
         (() => {
-          const sel = el('select', { onChange: (ev) => { state.minScore = Number(ev.target.value); state.offset = 0; loadProspects(); } });
-          [['85', 'Muito alta (≥85%)'], ['70', 'Alta (≥70%)'], ['55', 'Média (≥55%)'], ['40', 'Baixa (≥40%)'], ['1', 'Todos']].forEach(([v, t]) => {
-            const o = el('option', { value: v, text: t });
-            if (Number(v) === state.minScore) o.selected = true;
+          // Faixa exata: cada opção tem mínimo (inclusive) e máximo (exclusivo).
+          const bands = [
+            ['Muito alta (≥85%)', 85, null],
+            ['Alta (70–84%)', 70, 85],
+            ['Média (55–69%)', 55, 70],
+            ['Baixa (40–54%)', 40, 55],
+            ['Muito baixa (<40%)', 0, 40],
+            ['Todas as faixas', 0, null],
+          ];
+          const sel = el('select', { onChange: (ev) => {
+            const b = bands[Number(ev.target.value)];
+            state.minScore = b[1]; state.maxScore = b[2]; state.offset = 0; loadProspects();
+          } });
+          bands.forEach((b, i) => {
+            const o = el('option', { value: String(i), text: b[0] });
+            if (b[1] === state.minScore && (b[2] == null ? null : b[2]) === (state.maxScore == null ? null : state.maxScore)) o.selected = true;
             sel.appendChild(o);
           });
           return sel;

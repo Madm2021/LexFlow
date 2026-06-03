@@ -481,7 +481,41 @@ function deleteNoSequela() {
   return info.changes;
 }
 
-function queryProspects({ limit = 50, offset = 0, q = '', minScore = 70 } = {}) {
+// ----------------------------------------------------------------------------
+// DEDUPLICAÇÃO POR CPF
+// Agrupa pelos 11 dígitos do CPF (ignora pontuação e formatação) e, em cada
+// grupo repetido, mantém só o caso de MAIOR potencial (melhor sequela/êxito),
+// removendo os demais. CPFs vazios ou incompletos (≠ 11 dígitos) NÃO entram —
+// por isso deve rodar DEPOIS que a formatação/recuperação de zeros terminar.
+// ----------------------------------------------------------------------------
+function cpfDigitsExpr() {
+  return "replace(replace(replace(replace(COALESCE(cpf, ''), '.', ''), '-', ''), ' ', ''), '/', '')";
+}
+function countCpfDuplicates() {
+  if (!columnSet().has('cpf')) return 0;
+  const d = cpfDigitsExpr();
+  const r = db.prepare(`SELECT COUNT(*) AS total, COUNT(DISTINCT ${d}) AS uniq FROM records WHERE length(${d}) = 11`).get();
+  return Math.max(0, r.total - r.uniq);
+}
+function dedupeByCpf() {
+  if (!columnSet().has('cpf')) return 0;
+  const d = cpfDigitsExpr();
+  // Mantém rn=1 (maior _potencial; depois classificado; depois mais antigo) e apaga o resto.
+  const info = db.prepare(
+    `DELETE FROM records WHERE _rowid IN (
+       SELECT _rowid FROM (
+         SELECT _rowid, ROW_NUMBER() OVER (
+           PARTITION BY ${d} ORDER BY _potencial DESC, _classificado DESC, _rowid ASC
+         ) AS rn
+         FROM records WHERE length(${d}) = 11
+       ) WHERE rn > 1
+     )`,
+  ).run();
+  bumpData();
+  return info.changes;
+}
+
+function queryProspects({ limit = 50, offset = 0, q = '', minScore = 70, maxScore = null } = {}) {
   const e = prospectExprs();
   const select = [
     '_rowid', '_source_file', '_classificado',
@@ -493,8 +527,10 @@ function queryProspects({ limit = 50, offset = 0, q = '', minScore = 70 } = {}) 
 
   // Usa as colunas pré-calculadas (com índice) — rápido mesmo com milhões.
   // _excluir cobre óbito + sem direito (filiação) + aposentado.
+  // minScore = piso (inclusive); maxScore = teto (exclusivo) para faixa exata.
   const where = ['COALESCE(_excluir, _obito, 0) = 0', '_potencial >= ?'];
   const params = [Number(minScore) || 0];
+  if (maxScore != null && maxScore !== '') { where.push('_potencial < ?'); params.push(Number(maxScore)); }
   if (q) {
     const cols = ['nome', 'cat', 'cid_10', 'nat_lesao', 'parte_corpo', 'municipio_funcionario'];
     where.push('(' + cols.map((k) => `${fieldVal(k)} LIKE ? COLLATE NOCASE`).join(' OR ') + ')');
@@ -533,14 +569,14 @@ function queryProspects({ limit = 50, offset = 0, q = '', minScore = 70 } = {}) 
   return { rows, total, limit: safeLimit, offset: safeOffset, minScore: Number(minScore) || 0, pending: pendingCount() };
 }
 
-function exportProspectsCsv({ q = '', minScore = 70 } = {}) {
-  const all = queryProspects({ q, minScore, limit: 500, offset: 0 });
+function exportProspectsCsv({ q = '', minScore = 70, maxScore = null } = {}) {
+  const all = queryProspects({ q, minScore, maxScore, limit: 500, offset: 0 });
   // Reúne todas as páginas.
   const total = all.total;
   let rows = all.rows;
   let off = 500;
   while (off < total) {
-    rows = rows.concat(queryProspects({ q, minScore, limit: 500, offset: off }).rows);
+    rows = rows.concat(queryProspects({ q, minScore, maxScore, limit: 500, offset: off }).rows);
     off += 500;
   }
   const labels = { nome: 'Nome', cat: 'CAT', cid_10: 'CID-10', nat_lesao: 'Nat. Lesão', parte_corpo: 'Parte do Corpo', estado_funcionario: 'UF', municipio_funcionario: 'Município' };
@@ -620,6 +656,8 @@ module.exports = {
   formatCPF,
   countNoSequela,
   deleteNoSequela,
+  countCpfDuplicates,
+  dedupeByCpf,
   hasSequela,
   dashboard,
   listImports,

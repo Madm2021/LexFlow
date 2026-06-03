@@ -225,7 +225,7 @@ async function loadProspects() {
       el('label', { text: 'Rigor: ' }, [
         (() => {
           const sel = el('select', { onChange: (ev) => { state.minScore = Number(ev.target.value); state.offset = 0; loadProspects(); } });
-          [['90', 'Muito alta (≥90%)'], ['80', 'Alta (≥80%)'], ['70', 'Média (≥70%)'], ['1', 'Todos']].forEach(([v, t]) => {
+          [['85', 'Muito alta (≥85%)'], ['70', 'Alta (≥70%)'], ['55', 'Média (≥55%)'], ['40', 'Baixa (≥40%)'], ['1', 'Todos']].forEach(([v, t]) => {
             const o = el('option', { value: v, text: t });
             if (Number(v) === state.minScore) o.selected = true;
             sel.appendChild(o);

@@ -142,6 +142,9 @@ app.get('/api/records', (req, res) => {
   res.json(fn(opts));
 });
 
+// --- Painel analítico (BI) ---
+app.get('/api/dashboard', (req, res) => res.json(store.dashboard()));
+
 // --- Histórico de importações ---
 app.get('/api/imports', (req, res) => res.json(store.listImports()));
 

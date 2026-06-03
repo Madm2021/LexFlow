@@ -268,9 +268,63 @@ async function loadProspects() {
   viewer.append(head, table, pager);
 }
 
+// --- Painel analítico (BI) ---
+function card(label, value) {
+  return el('div', { class: 'dash-card' }, [el('strong', { text: value }), el('span', { text: label })]);
+}
+function barList(title, items) {
+  const max = items.reduce((m, x) => Math.max(m, x.n), 0) || 1;
+  const rows = items.map((x) => el('div', { class: 'bar-row' }, [
+    el('span', { class: 'bar-label', title: String(x.label), text: String(x.label).slice(0, 40) }),
+    el('span', { class: 'bar-track' }, [el('span', { class: 'bar-fill', style: `width:${Math.max(4, (x.n / max) * 100)}%` })]),
+    el('span', { class: 'bar-val', text: Number(x.n).toLocaleString('pt-BR') }),
+  ]));
+  return el('div', { class: 'dash-section' }, [el('h4', { text: title }), ...rows]);
+}
+
+async function loadDashboard() {
+  const viewer = $('#viewer');
+  viewer.innerHTML = '<div class="spinner">Calculando o painel... (pode levar alguns segundos em bases grandes)</div>';
+  let d;
+  try { d = await api('/api/dashboard'); }
+  catch (e) { viewer.innerHTML = `<div class="empty-state"><p>${e.message}</p></div>`; return; }
+  const t = d.totals;
+  const cards = el('div', { class: 'cards' }, [
+    card('Registros', fmt(t.total)),
+    card('Com sequela', fmt(t.comSequela)),
+    card('Candidatos (nota ≥ 7)', fmt(t.candidatos)),
+    card('Com telefone', fmt(t.comTelefone)),
+    card('Óbitos', fmt(t.obitos)),
+  ]);
+  const parts = [el('h3', { text: '📊 Painel analítico' }), cards];
+  if (t.pending > 0) parts.push(el('div', { class: 'sub', text: `⏳ Indexando ${fmt(t.pending)} registro(s)... alguns números ainda vão se ajustar.` }));
+  parts.push(el('div', { class: 'dash-grid' }, [
+    barList('Faixa de potencial', d.faixas),
+    barList('Top estados (UF do funcionário)', d.porUF),
+    barList('Top partes do corpo atingidas', d.porParte),
+    barList('Top CID-10', d.porCID),
+    barList('Top naturezas da lesão', d.porLesao),
+  ]));
+  viewer.innerHTML = '';
+  parts.forEach((p) => viewer.appendChild(p));
+}
+
 function refresh() {
-  if (state.mode === 'prospect') loadProspects();
+  if (state.mode === 'dashboard') loadDashboard();
+  else if (state.mode === 'prospect') loadProspects();
   else loadRecords();
+}
+
+function setMode(target) {
+  state.mode = state.mode === target ? 'list' : target;
+  state.offset = 0;
+  const m = state.mode;
+  $('#prospect-btn').textContent = m === 'prospect' ? '← Voltar à lista' : '🎯 Prospecção';
+  $('#prospect-btn').classList.toggle('active', m === 'prospect');
+  $('#dash-btn').textContent = m === 'dashboard' ? '← Voltar à lista' : '📊 Painel';
+  $('#dash-btn').classList.toggle('active', m === 'dashboard');
+  $('#view-btn').hidden = m !== 'list';
+  refresh();
 }
 
 // --- Wiring ---
@@ -294,22 +348,16 @@ function init() {
     $('#view-btn').textContent = state.view === 'clean' ? '🧩 Colunas: enxuta' : '🧩 Colunas: todas';
     loadRecords();
   });
-  $('#prospect-btn').addEventListener('click', () => {
-    state.mode = state.mode === 'prospect' ? 'list' : 'prospect';
-    state.offset = 0;
-    const on = state.mode === 'prospect';
-    $('#prospect-btn').textContent = on ? '← Voltar à lista' : '🎯 Prospecção';
-    $('#prospect-btn').classList.toggle('active', on);
-    $('#view-btn').hidden = on; // o seletor de colunas não se aplica à prospecção
-    refresh();
-  });
+  $('#prospect-btn').addEventListener('click', () => setMode('prospect'));
+  $('#dash-btn').addEventListener('click', () => setMode('dashboard'));
 
   // Mostra o botão "Sair" apenas quando o acesso é protegido por senha.
   api('/api/auth').then((a) => { if (a.enabled) $('#logout-link').hidden = false; }).catch(() => {});
 
   loadStats();
-  // Abre direto na Prospecção se a URL terminar em #prospeccao.
+  // Atalhos por URL: #prospeccao abre a triagem, #painel abre o BI.
   if (location.hash === '#prospeccao') $('#prospect-btn').click();
+  else if (location.hash === '#painel') $('#dash-btn').click();
   else loadRecords();
 }
 

@@ -411,6 +411,41 @@ function exportProspectsCsv({ q = '', minScore = 7 } = {}) {
   return lines.join('\r\n');
 }
 
+// Painel analítico (BI): números-chave e principais distribuições.
+function dashboard() {
+  const e = prospectExprs();
+  const total = db.prepare('SELECT COUNT(*) AS n FROM records').get().n;
+  const candidatos = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _obito = 0 AND _potencial >= 7').get().n;
+  const obitos = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _obito = 1').get().n;
+  const comTelefone = db.prepare(`SELECT COUNT(*) AS n FROM records WHERE length(trim(${e.tel})) > 0`).get().n;
+  const semSequela = countNoSequela();
+  const pending = pendingCount();
+
+  // Top-N de uma expressão (ignora vazios).
+  const topBy = (expr, limit = 10) => db.prepare(
+    `SELECT ${expr} AS label, COUNT(*) AS n FROM records WHERE trim(${expr}) <> '' GROUP BY label ORDER BY n DESC LIMIT ${limit}`,
+  ).all();
+
+  // Faixas de potencial (usa a coluna indexada).
+  const porNota = db.prepare('SELECT _potencial AS p, COUNT(*) AS n FROM records WHERE _potencial IS NOT NULL GROUP BY _potencial').all();
+  const faixas = { 'Alto (9-10)': 0, 'Médio (6-8)': 0, 'Baixo (1-5)': 0, 'Sem sinais (0)': 0 };
+  for (const r of porNota) {
+    if (r.p >= 9) faixas['Alto (9-10)'] += r.n;
+    else if (r.p >= 6) faixas['Médio (6-8)'] += r.n;
+    else if (r.p >= 1) faixas['Baixo (1-5)'] += r.n;
+    else faixas['Sem sinais (0)'] += r.n;
+  }
+
+  return {
+    totals: { total, comSequela: total - semSequela, semSequela, candidatos, obitos, comTelefone, pending },
+    faixas: Object.entries(faixas).map(([label, n]) => ({ label, n })),
+    porUF: topBy(fieldVal('estado_funcionario'), 15),
+    porParte: topBy(fieldVal('parte_corpo'), 10),
+    porCID: topBy(fieldVal('cid_10'), 10),
+    porLesao: topBy(fieldVal('nat_lesao'), 10),
+  };
+}
+
 // Permite que o importador invalide o cache de colunas se necessário.
 function resetColumnCache() {
   columnCache = null;
@@ -432,6 +467,7 @@ module.exports = {
   countNoSequela,
   deleteNoSequela,
   hasSequela,
+  dashboard,
   listImports,
   deleteBySource,
   clearAll,

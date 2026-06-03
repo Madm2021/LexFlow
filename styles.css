@@ -228,3 +228,17 @@ button.active { background: var(--accent); color: #fff; border-color: var(--acce
 .pot-media { background: rgba(210, 160, 60, 0.18); color: #e3b341; border: 1px solid rgba(210, 160, 60, 0.5); }
 .pot-baixa { background: rgba(139, 155, 176, 0.15); color: var(--muted); border: 1px solid var(--border); }
 td.motivos { font-size: 12px; color: var(--muted); white-space: normal; min-width: 200px; }
+
+/* Painel (BI) */
+.cards { display: flex; gap: 14px; flex-wrap: wrap; margin: 14px 0 18px; }
+.dash-card { flex: 1; min-width: 150px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; text-align: center; }
+.dash-card strong { display: block; font-size: 26px; color: var(--accent); }
+.dash-card span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+.dash-section { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.dash-section h4 { margin: 0 0 12px; font-size: 14px; }
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.bar-label { flex: 0 0 130px; font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { flex: 1; background: var(--bg); border-radius: 6px; height: 16px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 6px; }
+.bar-val { flex: 0 0 auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }

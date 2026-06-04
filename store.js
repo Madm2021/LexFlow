@@ -593,9 +593,22 @@ function exportProspectsCsv({ q = '', minScore = 70, maxScore = null } = {}) {
   return lines.join('\r\n');
 }
 
-// Painel analítico (BI): números-chave e principais distribuições (em cache).
+// Painel analítico (BI): números-chave e principais distribuições.
+// Cache inteligente: se os dados não mudaram, serve na hora. Durante a
+// indexação (quando bumpData dispara a cada lote), recalcula no máximo a cada
+// 30s — senão o painel (consultas pesadas em 11M) recalcularia a cada clique,
+// travando a tela e consumindo memória. Defasagem de até 30s é aceitável
+// (a tela já mostra o aviso "Indexando...").
+let dashCache = null;
 function dashboard() {
-  return cached('dashboard', () => computeDashboard());
+  const now = Date.now();
+  if (dashCache) {
+    if (dashCache.version === dataVersion) return dashCache.value; // dados estáveis
+    if (now - dashCache.t < 30000) return dashCache.value;          // indexando: no máx. 1x/30s
+  }
+  const value = computeDashboard();
+  dashCache = { t: now, version: dataVersion, value };
+  return value;
 }
 function computeDashboard() {
   const e = prospectExprs();

@@ -178,31 +178,69 @@ async function toggleImports() {
   } catch (e) { panel.innerHTML = `<div class="spinner">${e.message}</div>`; }
 }
 
-async function cleanupNoSequela() {
-  try {
-    const { count } = await api('/api/no-sequela');
-    if (count === 0) { toast('Nenhum caso sem sequela para remover. 👍', 'ok'); return; }
-    const ok = confirm(`Foram encontrados ${fmt(count)} caso(s) SEM indicação de sequela (lesão/CID).\n\nDeseja EXCLUIR esses ${fmt(count)} registros da base? Esta ação não pode ser desfeita.`);
-    if (!ok) return;
-    const r = await api('/api/no-sequela', { method: 'DELETE' });
-    toast(`${fmt(r.removed)} caso(s) sem sequela removido(s).`, 'ok');
-    await Promise.all([loadStats(), refresh()]);
-    $('#imports-panel').hidden = true;
-  } catch (e) { toast(e.message, 'err'); }
+// Mostra uma barra de progresso (no #imports-panel) durante a manutenção.
+function renderMaintProgress(j) {
+  let box = $('#maint-progress');
+  if (!box) {
+    box = el('div', { id: 'maint-progress', class: 'maint-progress' });
+    const panel = $('#imports-panel');
+    panel.insertBefore(box, panel.firstChild);
+  }
+  const pct = j.total ? Math.round((j.removed / j.total) * 100) : 0;
+  const label = j.phase === 'analisando'
+    ? 'Analisando registros... (pode levar 1–2 min)'
+    : `Removendo: ${fmt(j.removed)} de ${fmt(j.total)}`;
+  box.innerHTML = '';
+  box.append(
+    el('div', { class: 'maint-prog-label', text: label }),
+    el('div', { class: 'maint-prog-track' }, [el('div', { class: 'maint-prog-fill', style: `width:${j.phase === 'analisando' ? 8 : pct}%` })]),
+    el('div', { class: 'maint-prog-pct', text: j.phase === 'analisando' ? '...' : `${pct}%` }),
+  );
+}
+function clearMaintProgress() { const b = $('#maint-progress'); if (b) b.remove(); }
+
+function pollMaintenance(labelDone) {
+  const tick = async () => {
+    let j;
+    try { j = await api('/api/maintenance'); } catch (e) { setTimeout(tick, 2000); return; }
+    if (j.error) { clearMaintProgress(); toast('Erro: ' + j.error, 'err'); return; }
+    if (j.running) {
+      if (!$('#imports-panel').hidden) renderMaintProgress(j);
+      setTimeout(tick, 1200);
+    } else {
+      clearMaintProgress();
+      toast(`${labelDone}: ${fmt(j.removed)} registro(s) removido(s).`, 'ok');
+      await Promise.all([loadStats(), refresh()]);
+    }
+  };
+  tick();
 }
 
-async function dedupeByCpf() {
-  try {
-    const { count } = await api('/api/dedupe-cpf');
-    if (count === 0) { toast('Nenhum CPF duplicado encontrado (entre CPFs completos). 👍', 'ok'); return; }
-    const ok = confirm(`Foram encontrados ${fmt(count)} registro(s) repetido(s) por CPF.\n\nManter apenas o caso de MAIOR potencial (melhor sequela) de cada CPF e EXCLUIR os ${fmt(count)} repetidos?\n\n⚠️ Rode só depois que a formatação dos CPFs tiver terminado. Em bases grandes pode levar um tempo e a tela fica travada durante o processo. Esta ação não pode ser desfeita.`);
-    if (!ok) return;
-    toast('Deduplicando por CPF... pode levar um tempo. Aguarde.', '');
-    const r = await api('/api/dedupe-cpf', { method: 'DELETE' });
-    toast(`${fmt(r.removed)} registro(s) repetido(s) removido(s).`, 'ok');
-    await Promise.all([loadStats(), refresh()]);
-    $('#imports-panel').hidden = true;
-  } catch (e) { toast(e.message, 'err'); }
+async function startMaint(type, confirmMsg, labelDone) {
+  let cur;
+  try { cur = await api('/api/maintenance'); } catch (e) { cur = { running: false }; }
+  if (cur.running) { toast('Já há uma operação em andamento — acompanhe a barra.', ''); pollMaintenance(labelDone); return; }
+  if (!confirm(confirmMsg)) return;
+  try { await api(`/api/maintenance?type=${type}`, { method: 'POST' }); }
+  catch (e) { toast(e.message, 'err'); return; }
+  toast('Iniciando... acompanhe a barra de progresso.', '');
+  pollMaintenance(labelDone);
+}
+
+function cleanupNoSequela() {
+  startMaint(
+    'no-sequela',
+    'Remover os casos SEM indicação de sequela (lesão/CID)?\n\nO sistema vai ANALISAR e REMOVER em lotes, mostrando o progresso na tela. Pode levar alguns minutos. Esta ação não pode ser desfeita.',
+    'Limpeza por sequela concluída',
+  );
+}
+
+function dedupeByCpf() {
+  startMaint(
+    'dedupe-cpf',
+    'Deduplicar por CPF — manter só o caso de MAIOR potencial (melhor sequela) de cada CPF e remover os repetidos?\n\nO sistema vai ANALISAR e REMOVER em lotes, mostrando o progresso. ⚠️ Rode só depois que a formatação dos CPFs terminar. Esta ação não pode ser desfeita.',
+    'Deduplicação por CPF concluída',
+  );
 }
 
 async function removeImport(file) {

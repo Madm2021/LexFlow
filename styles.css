@@ -238,6 +238,13 @@ td.motivos { font-size: 12px; color: var(--muted); white-space: normal; min-widt
 .classe-muitobaixa { background: rgba(229, 83, 75, 0.26); color: #ff9a93; }
 .classe-naoclassif { background: rgba(139, 155, 176, 0.15); color: var(--muted); }
 
+/* Barra de progresso da manutenção (limpeza / dedup) */
+.maint-progress { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--accent); border-radius: 10px; background: rgba(79, 156, 249, 0.08); }
+.maint-prog-label { flex: 0 0 auto; font-size: 13px; color: var(--text); min-width: 220px; }
+.maint-prog-track { flex: 1; height: 12px; background: var(--bg); border-radius: 6px; overflow: hidden; }
+.maint-prog-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 6px; transition: width 0.4s; }
+.maint-prog-pct { flex: 0 0 auto; font-size: 13px; font-weight: 700; color: var(--accent); min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+
 /* Painel (BI) */
 .cards { display: flex; gap: 14px; flex-wrap: wrap; margin: 14px 0 18px; }
 .dash-card { flex: 1; min-width: 150px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; text-align: center; }

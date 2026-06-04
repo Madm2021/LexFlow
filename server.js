@@ -214,6 +214,29 @@ app.delete('/api/no-sequela', (req, res) => res.json({ removed: store.deleteNoSe
 app.get('/api/dedupe-cpf', (req, res) => res.json({ count: store.countCpfDuplicates() }));
 app.delete('/api/dedupe-cpf', (req, res) => res.json({ removed: store.dedupeByCpf() }));
 
+// --- Manutenção COM PROGRESSO (limpeza por sequela / dedup por CPF) ---
+// Roda em lotes em 2º plano; o front consulta GET /api/maintenance para a barra.
+function driveMaintenance() {
+  const j = store.getMaintJob();
+  if (!j.running) return;
+  if (j.phase === 'analisando') {
+    try { store.maintAnalyze(); } catch (e) { console.error('maintAnalyze:', e.message); }
+    setTimeout(driveMaintenance, 50);
+    return;
+  }
+  try { store.maintDeleteStep(5000); } catch (e) { console.error('maintDeleteStep:', e.message); }
+  if (store.getMaintJob().running) setTimeout(driveMaintenance, 120);
+}
+app.post('/api/maintenance', (req, res) => {
+  const type = req.query.type;
+  if (!['no-sequela', 'dedupe-cpf'].includes(type)) return res.status(400).json({ error: 'Tipo inválido.' });
+  if (store.getMaintJob().running) return res.status(409).json({ error: 'Já há uma operação em andamento.' });
+  store.startMaintenance(type);
+  setTimeout(driveMaintenance, 50);
+  res.json({ ok: true });
+});
+app.get('/api/maintenance', (req, res) => res.json(store.getMaintJob()));
+
 // --- Apagar tudo ---
 app.delete('/api/records', (req, res) => {
   store.clearAll();

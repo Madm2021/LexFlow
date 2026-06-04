@@ -515,6 +515,78 @@ function dedupeByCpf() {
   return info.changes;
 }
 
+// ----------------------------------------------------------------------------
+// JOB DE MANUTENÇÃO COM PROGRESSO (limpeza por sequela / dedup por CPF)
+// Em 2 fases: (1) "analisando" — monta uma tabela temporária com os _rowid
+// alvo (uma varredura); (2) "removendo" — apaga em lotes, reportando progresso.
+// Assim a tela mostra a porcentagem e o servidor não trava num DELETE gigante.
+// ----------------------------------------------------------------------------
+let maintJob = null;
+function getMaintJob() {
+  return maintJob || { running: false, phase: 'idle', total: 0, removed: 0, type: null, error: null };
+}
+function startMaintenance(type) {
+  maintJob = { running: true, phase: 'analisando', total: 0, removed: 0, type, error: null };
+  return getMaintJob();
+}
+function maintAnalyze() {
+  if (!maintJob) return;
+  try {
+    db.exec('DROP TABLE IF EXISTS _todel');
+    if (maintJob.type === 'dedupe-cpf') {
+      if (columnSet().has('cpf')) {
+        const d = cpfDigitsExpr();
+        db.exec(`CREATE TEMP TABLE _todel AS
+          SELECT _rowid FROM (
+            SELECT _rowid, ROW_NUMBER() OVER (
+              PARTITION BY ${d} ORDER BY _potencial DESC, _classificado DESC, _rowid ASC
+            ) AS rn FROM records WHERE length(${d}) = 11
+          ) WHERE rn > 1`);
+      } else {
+        db.exec('CREATE TEMP TABLE _todel (_rowid INTEGER)');
+      }
+    } else {
+      db.exec(`CREATE TEMP TABLE _todel AS SELECT _rowid FROM records WHERE ${noSequelaWhere()}`);
+    }
+    maintJob.total = db.prepare('SELECT COUNT(*) AS n FROM _todel').get().n;
+    if (maintJob.total > 0) {
+      maintJob.phase = 'removendo';
+    } else {
+      maintJob.phase = 'concluido';
+      maintJob.running = false;
+      db.exec('DROP TABLE IF EXISTS _todel');
+    }
+  } catch (e) {
+    maintJob.error = e.message;
+    maintJob.running = false;
+  }
+}
+function maintDeleteStep(chunk = 5000) {
+  if (!maintJob || !maintJob.running || maintJob.phase !== 'removendo') return 0;
+  try {
+    const ids = db.prepare('SELECT _rowid FROM _todel LIMIT ?').all(chunk).map((r) => r._rowid);
+    if (ids.length === 0) {
+      maintJob.running = false;
+      maintJob.phase = 'concluido';
+      db.exec('DROP TABLE IF EXISTS _todel');
+      bumpData();
+      return 0;
+    }
+    const list = ids.join(',');
+    db.transaction(() => {
+      db.exec(`DELETE FROM records WHERE _rowid IN (${list})`);
+      db.exec(`DELETE FROM _todel WHERE _rowid IN (${list})`);
+    })();
+    maintJob.removed += ids.length;
+    bumpData();
+    return ids.length;
+  } catch (e) {
+    maintJob.error = e.message;
+    maintJob.running = false;
+    return 0;
+  }
+}
+
 function queryProspects({ limit = 50, offset = 0, q = '', minScore = 70, maxScore = null } = {}) {
   const e = prospectExprs();
   const select = [
@@ -671,6 +743,10 @@ module.exports = {
   deleteNoSequela,
   countCpfDuplicates,
   dedupeByCpf,
+  getMaintJob,
+  startMaintenance,
+  maintAnalyze,
+  maintDeleteStep,
   hasSequela,
   dashboard,
   listImports,

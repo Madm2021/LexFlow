@@ -94,15 +94,18 @@ function ensureScoring() {
     // Enquanto importa, não disputa o banco com a pontuação — só aguarda.
     if (importing) { setTimeout(step, 500); return; }
     let changed = 0;
-    try { changed = store.scorePending(5000); } catch (e) { console.error('scorePending:', e.message); }
-    if (changed > 0) { setTimeout(step, 40); return; }
+    try { changed = store.scorePending(2000); } catch (e) { console.error('scorePending:', e.message); }
+    if (changed > 0) { setTimeout(step, 250); return; }
     // Pontuação concluída: normaliza os CPFs gravados (em 2º plano, sem competir
     // com a indexação). Cursor por _rowid também cobre futuros imports.
     let cpf = 0;
-    try { cpf = store.cpfBackfillPending(5000); } catch (e) { console.error('cpfBackfill:', e.message); }
-    if (cpf > 0) setTimeout(step, 40);
+    try { cpf = store.cpfBackfillPending(2000); } catch (e) { console.error('cpfBackfill:', e.message); }
+    if (cpf > 0) setTimeout(step, 250);
     else scoringActive = false;
   };
+  // Lotes menores (2000) + pausa maior (250ms) entre eles: a indexação demora
+  // um pouco mais, mas deixa o servidor respirar para atender a tela e uploads
+  // (evita "Request aborted" por servidor ocupado em bases muito grandes).
   setTimeout(step, 100);
 }
 

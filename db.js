@@ -18,7 +18,8 @@ const db = new Database(DB_PATH);
 //   duplicidade (_hash) inteiro "quente" na memória — esse índice é o que mais
 //   pesa conforme a base cresce. Dimensionado para o serviço com 24 GB de RAM;
 //   o SQLite só usa de fato o que precisar (cresce sob demanda).
-// - mmap_size: 8 GB do banco mapeados em memória, acelerando muito a leitura.
+// - mmap_size: 2 GB do banco mapeados em memória (acelera leitura sem inflar
+//   demais o uso de RAM — o cache de 2 GB já segura o índice de duplicidade).
 // - temp_store=MEMORY: ordenações/temporárias na RAM em vez de disco.
 // Para servidores com pouca RAM (≤1 GB), reduza cache_size para -98304 (96 MB)
 // e mmap_size para 268435456 (256 MB).
@@ -26,7 +27,7 @@ db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
 db.pragma('temp_store = MEMORY');
 db.pragma('cache_size = -2097152');
-db.pragma('mmap_size = 8589934592');
+db.pragma('mmap_size = 2147483648');
 
 // Modelo unificado: TODAS as planilhas alimentam uma única tabela "records".
 // - "columns" é o catálogo da união de colunas vistas em todos os arquivos.

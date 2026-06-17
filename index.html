@@ -37,15 +37,28 @@
     </section>
 
     <section class="toolbar">
-      <input type="search" id="search" placeholder="🔎 Buscar em toda a lista (qualquer coluna)..." />
+      <input type="search" id="search" placeholder="🔎 Buscar em toda a lista (nome, CPF, cidade...)" />
       <button id="search-btn">Buscar</button>
       <button id="search-clear" class="ghost" hidden>Limpar</button>
       <span class="spacer"></span>
-      <button id="dash-btn" class="ghost" title="Painel analítico (BI)">📊 Painel</button>
-      <button id="prospect-btn" class="ghost" title="Triagem de casos para auxílio-acidente">🎯 Prospecção</button>
-      <button id="view-btn" class="ghost" title="Alternar entre lista enxuta e colunas originais">🧩 Colunas: enxuta</button>
       <button id="imports-btn" class="ghost" title="Ver planilhas importadas">📄 Planilhas</button>
       <a id="export-link" href="/api/export.csv"><button class="ghost">⤓ Exportar CSV</button></a>
+    </section>
+
+    <section class="filters" id="filters">
+      <label>Estado
+        <select id="f-estado_funcionario" data-filter="estado_funcionario"><option value="">todos</option></select>
+      </label>
+      <label>Sexo
+        <select id="f-sexo" data-filter="sexo"><option value="">todos</option></select>
+      </label>
+      <label>Município
+        <input id="f-municipio_funcionario" data-filter="municipio_funcionario" placeholder="começa com..." />
+      </label>
+      <label>Bairro
+        <input id="f-bairro_funcionario" data-filter="bairro_funcionario" placeholder="começa com..." />
+      </label>
+      <button id="filter-clear" class="ghost small" hidden>Limpar filtros</button>
     </section>
 
     <section id="imports-panel" class="imports-panel" hidden></section>

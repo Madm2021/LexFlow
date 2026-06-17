@@ -189,6 +189,19 @@ td .null { color: var(--muted); font-style: italic; }
 .toolbar .spacer { flex: 0 0 0; }
 .toolbar a { text-decoration: none; }
 
+/* Barra de filtros por coluna */
+.filters {
+  display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 16px; margin-bottom: 16px;
+}
+.filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.filters select, .filters input {
+  padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-size: 14px; min-width: 170px;
+}
+.filters select:focus, .filters input:focus { outline: none; border-color: var(--accent); }
+
 .feedback .line.warn { background: rgba(210, 160, 60, 0.12); border: 1px solid rgba(210, 160, 60, 0.4); }
 
 /* Painel de planilhas importadas */

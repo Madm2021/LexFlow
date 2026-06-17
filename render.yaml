@@ -17,4 +17,7 @@ services:
     disk:
       name: lexflow-data
       mountPath: /data
-      sizeGB: 1
+      # Dê folga: a base com milhões de linhas mais a MIGRAÇÃO (que chega a
+      # ocupar ~2x temporariamente) precisam de espaço sobrando. Ajuste ao seu
+      # volume — ex.: 10 GB para uma base de poucos GB.
+      sizeGB: 10

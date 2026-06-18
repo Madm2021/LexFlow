@@ -79,7 +79,7 @@ body {
 /* ===== Topbar ===== */
 .topbar {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 14px 24px; background: var(--surface);
+  padding: 14px clamp(14px, 2.5vw, 48px); background: var(--surface);
   border-bottom: 1px solid var(--border); flex-wrap: wrap;
   position: sticky; top: 0; z-index: 20;
 }
@@ -94,7 +94,9 @@ body {
 .counters .sep { opacity: .5; }
 
 /* ===== Layout ===== */
-main { max-width: 1500px; margin: 0 auto; padding: 26px 24px 70px; }
+/* Layout fluido: ocupa a largura toda da tela (responsivo do celular ao
+   monitor grande). O padding lateral acompanha o tamanho da tela. */
+main { width: 100%; margin: 0; padding: 26px clamp(14px, 2.5vw, 48px) 70px; }
 
 /* ===== Busca (herói) ===== */
 .search-hero { display: flex; gap: 10px; align-items: stretch; margin-bottom: 14px; }

@@ -201,9 +201,10 @@ async function startHygiene() {
 // ===== Reunir duplicados antigos (Fase 2) =====
 function dedupStatsHtml(j) {
   if (j.running) return `<span class="hg-pend">Reunindo... ${fmt(j.removed)} duplicado(s) removido(s)</span>`;
-  if (j.hygienePending > 0) {
-    return `<span class="hg-bad">⚠ Rode a higienização primeiro</span> · `
-      + `<span class="hg-pend">${fmt(j.hygienePending)} registro(s) ainda sem chave de identidade</span>`;
+  // Sem a chave de identidade preenchida na base inteira, a contagem é enganosa.
+  if (!j.keysReady || j.hygienePending > 0) {
+    return '<span class="hg-bad">⚠ Rode a 🧼 Higienização primeiro</span> · '
+      + '<span class="hg-pend">ela prepara a chave de identidade dos registros já existentes</span>';
   }
   if (!j.duplicates) return '<span class="hg-ok">✓ Nenhum duplicado antigo a reunir</span>';
   return `<span class="hg-pend">${fmt(j.duplicates)} duplicado(s) antigo(s) podem ser reunidos</span>`;
@@ -212,7 +213,7 @@ async function loadDedup() {
   try {
     const j = await api('/api/dedup');
     $('#dedup-stats').innerHTML = dedupStatsHtml(j);
-    $('#dedup-btn').disabled = j.running || (!j.running && (j.hygienePending > 0 || !j.duplicates));
+    $('#dedup-btn').disabled = j.running || (!j.running && (!j.keysReady || j.hygienePending > 0 || !j.duplicates));
     if (j.running) pollDedup();
   } catch (e) { /* silencioso */ }
 }
@@ -242,7 +243,7 @@ function pollDedup() {
 async function startDedup() {
   let j;
   try { j = await api('/api/dedup'); } catch (e) { toast(e.message, 'err'); return; }
-  if (j.hygienePending > 0) { toast('Rode a higienização primeiro.', 'err'); return; }
+  if (!j.keysReady || j.hygienePending > 0) { toast('Rode a higienização primeiro (ela prepara a chave de identidade).', 'err'); return; }
   if (!j.duplicates) { toast('Nenhum duplicado antigo a reunir.', 'ok'); return; }
   const msg = `Reunir ${fmt(j.duplicates)} duplicado(s) antigo(s) agora?\n\n`
     + 'Os dados são FUNDIDOS num único registro (preenche vazios e acumula contatos) e as cópias são REMOVIDAS. '

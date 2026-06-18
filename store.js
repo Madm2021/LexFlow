@@ -453,6 +453,7 @@ function startDedup() {
 }
 
 // Processa um lote de chaves; retorna quantas chaves varreu (0 = terminou).
+let dedupBumps = 0;
 function dedupStep(chunkKeys = 2000) {
   if (!dedup.running) return 0;
   const keys = dedupKeysSel.all(dedup.cursor, chunkKeys);
@@ -463,6 +464,11 @@ function dedupStep(chunkKeys = 2000) {
   tx();
   dedup.cursor = keys[keys.length - 1]._key;
   persistDedup(); // salva o ponto de retomada a cada lote
+  // Invalida os caches (total e distribuição) de tempos em tempos, para a tela
+  // não mostrar números velhos durante a remoção. bumpData preserva flag:* (o
+  // estado de retomada do dedup não se perde).
+  dedupBumps += 1;
+  if (dedupBumps % 25 === 0) bumpData();
   return keys.length;
 }
 

@@ -160,12 +160,17 @@ app.post('/api/hygiene', (req, res) => {
 app.get('/api/hygiene', (req, res) => res.json(store.getHygieneJob()));
 
 // --- Reunir duplicados antigos (Fase 2), em lotes, sem travar ---
+let dedupChunks = 0;
 function driveDedup() {
   if (!store.getDedupJob().running) return;
   let n = 0;
   try { n = store.dedupStep(2000); } catch (e) { console.error('dedup:', e.message); }
+  dedupChunks += 1;
+  // Descarrega o WAL periodicamente: numa remoção de milhões de linhas, sem isto
+  // o WAL cresce e a memória sobe sem parar (pode estourar). PASSIVE não trava.
+  if (dedupChunks % 20 === 0) { try { db.pragma('wal_checkpoint(PASSIVE)'); } catch (e) { /* ignora */ } }
   if (store.getDedupJob().running) setTimeout(driveDedup, n > 0 ? 120 : 1000);
-  else { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ } }
+  else { dedupChunks = 0; try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ } }
 }
 app.post('/api/dedup', (req, res) => {
   if (store.getDedupJob().running) return res.status(409).json({ error: 'Já em andamento.' });

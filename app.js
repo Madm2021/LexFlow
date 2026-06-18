@@ -175,12 +175,21 @@ function pollHygiene() {
   const tick = async () => {
     let j;
     try { j = await api('/api/hygiene'); } catch (e) { setTimeout(tick, 2000); return; }
-    const total = j.total || 1;
-    const done = j.valid + j.invalid;
-    const pct = Math.min(100, Math.round((done / total) * 100));
+    // Fase rápida (keys): mostra o avanço do preenchimento da chave; senão, o
+    // avanço da normalização (CPF/datas).
+    let label; let pct;
+    if (j.phase === 'keys') {
+      pct = Math.min(100, Math.round(((j.keyDone || 0) / (j.keyTotal || 1)) * 100));
+      label = `Preparando a chave de identidade... ${fmt(j.keyDone || 0)} de ${fmt(j.keyTotal || 0)}`;
+    } else {
+      const total = j.total || 1;
+      const done = j.valid + j.invalid;
+      pct = Math.min(100, Math.round((done / total) * 100));
+      label = `Higienizando... ${fmt(done)} de ${fmt(total)}`;
+    }
     const box = $('#hygiene-progress');
     box.hidden = false;
-    box.innerHTML = `<div class="maint-prog-label">Higienizando... ${fmt(done)} de ${fmt(total)}</div>`
+    box.innerHTML = `<div class="maint-prog-label">${label}</div>`
       + `<div class="maint-prog-track"><div class="maint-prog-fill" style="width:${pct}%"></div></div>`
       + `<div class="maint-prog-pct">${pct}%</div>`;
     $('#hygiene-stats').innerHTML = hygieneStatsHtml(j);
@@ -189,6 +198,7 @@ function pollHygiene() {
     $('#hygiene-btn').disabled = false;
     toast('Higienização concluída! 🧼', 'ok');
     loadStats();
+    loadDedup();
   };
   tick();
 }

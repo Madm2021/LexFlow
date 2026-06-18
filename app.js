@@ -96,7 +96,7 @@ async function loadRecords() {
   meta.innerHTML = `<span class="big-total">${fmt(total)}</span> <span class="meta-sub">registro(s)${ctx}${hasFilters() ? ' (filtrado)' : ''}</span>`;
   if (state.distOpen) loadFacets();
 
-  const headerCells = [{ column_name: '_source_file', original_name: 'Origem' }, ...columns];
+  const headerCells = columns;
   const thead = el('thead', {}, [el('tr', {}, headerCells.map((c) => {
     const arrow = state.sort === c.column_name ? (state.dir === 'asc' ? ' ▲' : ' ▼') : '';
     return el('th', {
@@ -113,8 +113,7 @@ async function loadRecords() {
   const tbody = el('tbody', {}, rows.map((row) => el('tr', {}, headerCells.map((c) => {
     const v = row[c.column_name];
     let cls = '';
-    if (c.column_name === '_source_file') cls = 'origin';
-    else if (c.column_name === 'cpf') cls = 'cpf';
+    if (c.column_name === 'cpf') cls = 'cpf';
     const td = el('td', { class: cls });
     if (v == null || v === '') td.appendChild(el('span', { class: 'null', text: '—' }));
     else td.textContent = String(v);

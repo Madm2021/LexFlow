@@ -1,76 +1,97 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LexFlow — Banco unificado de planilhas</title>
+  <title>LexFlow — Consulta de planilhas</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <span class="logo">⬡</span>
-      <div>
+      <div class="brand-text">
         <h1>LexFlow</h1>
-        <p class="tagline">Todas as suas planilhas em uma única lista, sem duplicar</p>
+        <p class="tagline">Consulta unificada de planilhas</p>
       </div>
     </div>
-    <div class="stats">
-      <div class="stat"><strong id="stat-records">0</strong><span>registros</span></div>
-      <div class="stat"><strong id="stat-columns">0</strong><span>colunas</span></div>
-      <div class="stat"><strong id="stat-imports">0</strong><span>planilhas</span></div>
-      <a id="logout-link" href="/logout" class="logout" hidden>Sair</a>
+
+    <div class="top-actions">
+      <div class="counters">
+        <span><strong id="stat-records">0</strong> registros</span>
+        <span class="sep">·</span>
+        <span><strong id="stat-imports">0</strong> planilhas</span>
+      </div>
+      <button id="theme-toggle" class="icon-btn" title="Alternar tema claro/escuro" aria-label="Alternar tema">🌙</button>
+      <button id="import-btn" class="btn ghost">⤓ Importar</button>
+      <a id="export-link" href="/api/export.csv" class="btn ghost">⤒ Exportar</a>
+      <a id="logout-link" href="/logout" class="btn ghost danger-text" hidden>Sair</a>
     </div>
   </header>
 
   <main>
-    <section class="upload-section">
+    <!-- Busca (herói) -->
+    <section class="search-hero">
+      <div class="search-box">
+        <span class="search-icon">🔎</span>
+        <input type="search" id="search" placeholder="Buscar por nome, CPF, cidade, bairro..." autocomplete="off" />
+        <button id="search-clear" class="clear-x" title="Limpar busca" hidden>×</button>
+      </div>
+      <button id="search-btn" class="btn primary">Buscar</button>
+    </section>
+
+    <!-- Filtros por coluna -->
+    <section class="filters" id="filters">
+      <div class="filter-field">
+        <label for="f-estado_funcionario">Estado</label>
+        <select id="f-estado_funcionario" data-filter="estado_funcionario"><option value="">Todos</option></select>
+      </div>
+      <div class="filter-field">
+        <label for="f-sexo">Sexo</label>
+        <select id="f-sexo" data-filter="sexo"><option value="">Todos</option></select>
+      </div>
+      <div class="filter-field">
+        <label for="f-municipio_funcionario">Município</label>
+        <input id="f-municipio_funcionario" data-filter="municipio_funcionario" placeholder="começa com..." autocomplete="off" />
+      </div>
+      <div class="filter-field">
+        <label for="f-bairro_funcionario">Bairro</label>
+        <input id="f-bairro_funcionario" data-filter="bairro_funcionario" placeholder="começa com..." autocomplete="off" />
+      </div>
+      <button id="filter-clear" class="btn ghost small" hidden>Limpar filtros</button>
+    </section>
+
+    <!-- Resultados -->
+    <section class="results">
+      <div id="results-meta" class="results-meta"></div>
+      <div id="viewer">
+        <div class="empty-state" id="empty-state">
+          <p>Use a busca acima ou os filtros para consultar a base. Para adicionar dados, clique em <strong>⤓ Importar</strong>.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal de importação -->
+  <div id="import-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Importar planilhas</h2>
+        <button class="icon-btn" data-close-modal title="Fechar">×</button>
+      </div>
       <div id="dropzone" class="dropzone">
         <input type="file" id="file-input" multiple accept=".xlsx,.xlsm,.csv,.txt" hidden />
         <div class="dropzone-inner">
           <span class="dz-icon">⤓</span>
           <p><strong>Arraste planilhas aqui</strong> ou clique para selecionar</p>
-          <small>.xlsx, .xlsm, .csv — vários de uma vez. Linhas repetidas são ignoradas automaticamente.</small>
+          <small>.xlsx, .xlsm, .csv — vários de uma vez. Linhas repetidas são ignoradas.</small>
         </div>
       </div>
       <div id="upload-feedback" class="feedback"></div>
-    </section>
-
-    <section class="toolbar">
-      <input type="search" id="search" placeholder="🔎 Buscar em toda a lista (nome, CPF, cidade...)" />
-      <button id="search-btn">Buscar</button>
-      <button id="search-clear" class="ghost" hidden>Limpar</button>
-      <span class="spacer"></span>
-      <button id="imports-btn" class="ghost" title="Ver planilhas importadas">📄 Planilhas</button>
-      <a id="export-link" href="/api/export.csv"><button class="ghost">⤓ Exportar CSV</button></a>
-    </section>
-
-    <section class="filters" id="filters">
-      <label>Estado
-        <select id="f-estado_funcionario" data-filter="estado_funcionario"><option value="">todos</option></select>
-      </label>
-      <label>Sexo
-        <select id="f-sexo" data-filter="sexo"><option value="">todos</option></select>
-      </label>
-      <label>Município
-        <input id="f-municipio_funcionario" data-filter="municipio_funcionario" placeholder="começa com..." />
-      </label>
-      <label>Bairro
-        <input id="f-bairro_funcionario" data-filter="bairro_funcionario" placeholder="começa com..." />
-      </label>
-      <button id="filter-clear" class="ghost small" hidden>Limpar filtros</button>
-    </section>
-
-    <section id="imports-panel" class="imports-panel" hidden></section>
-
-    <section class="viewer">
-      <div id="viewer">
-        <div class="empty-state" id="empty-state">
-          <p>Sua lista está vazia. Suba planilhas acima para começar a unificar os dados.</p>
-        </div>
-      </div>
-    </section>
-  </main>
+      <div id="imports-panel" class="imports-panel"></div>
+    </div>
+  </div>
 
   <div id="toast" class="toast" hidden></div>
   <script src="app.js"></script>

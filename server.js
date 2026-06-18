@@ -187,6 +187,12 @@ if (require.main === module) {
   const server = app.listen(PORT, () => {
     console.log(`LexFlow rodando em http://localhost:${PORT}`);
     console.log(`Banco de dados: ${DB_PATH}`);
+    // Pré-aquece a distribuição em 2º plano para a 1ª abertura ser instantânea.
+    setTimeout(() => {
+      console.log('LexFlow: pré-calculando a distribuição (cache)...');
+      store.warm();
+      console.log('LexFlow: distribuição pronta.');
+    }, 1500);
   });
   // Uploads grandes e lentos podem passar do limite padrão de 5 min do Node.
   server.requestTimeout = 60 * 60 * 1000;

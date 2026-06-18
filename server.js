@@ -9,7 +9,7 @@ const multer = require('multer');
 const { importFilePath } = require('./importer');
 const store = require('./store');
 const auth = require('./auth');
-const { db, DB_PATH, FILTER_KEYS } = require('./db');
+const { db, DB_PATH } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -82,10 +82,10 @@ app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.c
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// Lê os filtros por coluna da query string (apenas as colunas permitidas).
+// Lê os filtros da query string (apenas as colunas permitidas).
 function readFilters(req) {
   const filters = {};
-  for (const k of FILTER_KEYS) {
+  for (const k of store.ALL_FILTER_KEYS) {
     if (req.query[k] != null && String(req.query[k]).trim() !== '') filters[k] = String(req.query[k]).trim();
   }
   return filters;

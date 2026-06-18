@@ -1,6 +1,6 @@
 'use strict';
 
-const FILTER_KEYS = ['estado_funcionario', 'sexo', 'municipio_funcionario', 'bairro_funcionario'];
+const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario', 'cid_10'];
 
 const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {} };
 
@@ -154,7 +154,7 @@ function clearFilters() {
   loadRecords();
 }
 async function loadFilterOptions() {
-  for (const col of ['estado_funcionario', 'sexo']) {
+  for (const col of ['estado_funcionario']) {
     const sel = $(`[data-filter="${col}"]`);
     if (!sel || sel.tagName !== 'SELECT') continue;
     try {

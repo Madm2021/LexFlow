@@ -24,17 +24,8 @@ db.pragma('synchronous = NORMAL');
 db.pragma('cache_size = -262144');
 db.pragma('mmap_size = 1073741824');
 
-// Colunas pré-definidas (do de-para). São as ÚNICAS colunas de dados da base.
-const COLUMNS = MAPPING.map((f) => ({ key: f.key, label: f.label }));
-const COLUMN_KEYS = COLUMNS.map((c) => c.key);
-
-// Colunas com índice próprio para filtro rápido por prefixo. O filtro de CID-10
-// NÃO entra aqui: ele é resolvido pelo índice full-text (records_fts), evitando
-// criar um índice novo (e o custo de reconstruí-lo numa base grande).
-const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario'];
-
-// Colunas de controle que existem sempre (não vêm das planilhas).
-const META_COLUMNS = new Set(['_rowid', '_source_file', '_imported_at', '_hash', '_search']);
+// Constantes de esquema vêm de schema.js (compartilhadas com o worker).
+const { COLUMNS, COLUMN_KEYS, FILTER_KEYS, META_COLUMNS } = require('./schema');
 
 // SQL da tabela principal (schema fixo: controle + colunas do de-para).
 function createRecordsTable(ifNotExists) {
@@ -134,6 +125,13 @@ db.exec(`
     rows_added   INTEGER NOT NULL,
     rows_skipped INTEGER NOT NULL,
     imported_at  TEXT NOT NULL
+  );
+
+  -- Cache persistente (ex.: distribuição sem filtro já calculada). Sobrevive a
+  -- reinícios; é limpo quando os dados mudam (import/remoção).
+  CREATE TABLE IF NOT EXISTS app_cache (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
   );
 `);
 

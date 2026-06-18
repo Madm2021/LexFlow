@@ -425,9 +425,30 @@ function getDedupJob() {
   };
 }
 
+// Estado persistido (sobrevive a reinícios): permite RETOMAR a reunião do ponto
+// exato (cursor) em que parou, sem re-varrer milhões de chaves já limpas, e
+// permite o servidor auto-retomar sozinho após um reinício no meio.
+const DEDUP_STATE = 'flag:dedup_state';
+function persistDedup() {
+  setPersist(DEDUP_STATE, {
+    pending: dedup.running, cursor: dedup.cursor, removed: dedup.removed, groups: dedup.groups,
+  });
+}
+function dedupPending() {
+  const s = getPersist(DEDUP_STATE);
+  return !!(s && s.pending);
+}
+function resumeDedup() {
+  const s = getPersist(DEDUP_STATE);
+  if (!s || !s.pending) return false;
+  dedup = { running: true, cursor: s.cursor || '', removed: s.removed || 0, groups: s.groups || 0 };
+  return true;
+}
+
 function startDedup() {
   if (dedup.running) return { running: true, removed: dedup.removed, groups: dedup.groups };
   dedup = { running: true, cursor: '', removed: 0, groups: 0 };
+  persistDedup();
   return { running: true, removed: 0, groups: 0 };
 }
 
@@ -435,12 +456,13 @@ function startDedup() {
 function dedupStep(chunkKeys = 2000) {
   if (!dedup.running) return 0;
   const keys = dedupKeysSel.all(dedup.cursor, chunkKeys);
-  if (keys.length === 0) { dedup.running = false; bumpData(); return 0; }
+  if (keys.length === 0) { dedup.running = false; persistDedup(); bumpData(); return 0; }
   const tx = db.transaction(() => {
     for (const row of keys) { if (row.c > 1) collapseKey(row._key); }
   });
   tx();
   dedup.cursor = keys[keys.length - 1]._key;
+  persistDedup(); // salva o ponto de retomada a cada lote
   return keys.length;
 }
 
@@ -488,6 +510,8 @@ module.exports = {
   getDedupJob,
   startDedup,
   dedupStep,
+  dedupPending,
+  resumeDedup,
   listImports,
   deleteBySource,
   clearAll,

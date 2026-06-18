@@ -166,9 +166,10 @@ function driveDedup() {
   let n = 0;
   try { n = store.dedupStep(2000); } catch (e) { console.error('dedup:', e.message); }
   dedupChunks += 1;
-  // Descarrega o WAL periodicamente: numa remoção de milhões de linhas, sem isto
-  // o WAL cresce e a memória sobe sem parar (pode estourar). PASSIVE não trava.
-  if (dedupChunks % 20 === 0) { try { db.pragma('wal_checkpoint(PASSIVE)'); } catch (e) { /* ignora */ } }
+  // Descarrega o WAL periodicamente (TRUNCATE): numa remoção de milhões de linhas
+  // o WAL cresce e a memória sobe (pode reiniciar). Esvaziar de tempos em tempos
+  // mantém a memória baixa.
+  if (dedupChunks % 20 === 0) { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ } }
   if (store.getDedupJob().running) setTimeout(driveDedup, n > 0 ? 120 : 1000);
   else { dedupChunks = 0; try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ } }
 }
@@ -232,6 +233,16 @@ if (require.main === module) {
     console.log(`Banco de dados: ${DB_PATH}`);
     // Pré-calcula a distribuição no worker (não trava o servidor).
     setTimeout(() => { try { store.warmStart(); } catch (e) { console.error('warmStart:', e.message); } }, 2000);
+    // Auto-retoma o "reunir duplicados" se ficou pendente (ex.: reinício no meio):
+    // continua do ponto exato salvo, sem precisar clicar de novo.
+    setTimeout(() => {
+      try {
+        if (store.dedupPending() && store.resumeDedup()) {
+          console.log('LexFlow: retomando o reunir-duplicados de onde parou...');
+          driveDedup();
+        }
+      } catch (e) { console.error('auto-resume dedup:', e.message); }
+    }, 4000);
   });
   // Uploads grandes e lentos podem passar do limite padrão de 5 min do Node.
   server.requestTimeout = 60 * 60 * 1000;

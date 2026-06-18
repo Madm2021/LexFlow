@@ -110,6 +110,17 @@ function migrateLegacyIfNeeded() {
   });
   migrate();
   try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
+  // Recupera o espaço em disco liberado pela tabela antiga (o schema novo é
+  // muito menor). O VACUUM reescreve o banco só com os dados vivos. É
+  // best-effort: se faltar espaço temporário, a migração já está OK e o app
+  // funciona — o arquivo só fica maior até o próximo VACUUM.
+  try {
+    console.log('LexFlow: compactando o banco (VACUUM) para liberar espaço...');
+    db.exec('VACUUM');
+    console.log('LexFlow: banco compactado.');
+  } catch (e) {
+    console.error('LexFlow: VACUUM falhou (sem espaço temporário?), seguindo mesmo assim:', e.message);
+  }
   const n = db.prepare('SELECT COUNT(*) AS n FROM records').get().n;
   console.log(`LexFlow: migração concluída — ${n.toLocaleString('pt-BR')} registros no novo formato.`);
   return true;

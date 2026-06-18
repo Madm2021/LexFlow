@@ -28,8 +28,10 @@ db.pragma('mmap_size = 1073741824');
 const COLUMNS = MAPPING.map((f) => ({ key: f.key, label: f.label }));
 const COLUMN_KEYS = COLUMNS.map((c) => c.key);
 
-// Colunas indexadas para filtro rápido por prefixo (igualdade/começo).
-const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario', 'bairro_funcionario', 'sexo'];
+// Colunas com índice próprio para filtro rápido por prefixo. O filtro de CID-10
+// NÃO entra aqui: ele é resolvido pelo índice full-text (records_fts), evitando
+// criar um índice novo (e o custo de reconstruí-lo numa base grande).
+const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario'];
 
 // Colunas de controle que existem sempre (não vêm das planilhas).
 const META_COLUMNS = new Set(['_rowid', '_source_file', '_imported_at', '_hash', '_search']);

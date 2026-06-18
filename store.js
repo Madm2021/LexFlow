@@ -2,8 +2,12 @@
 
 const { db, COLUMNS, COLUMN_KEYS, FILTER_KEYS } = require('./db');
 
+// Filtros resolvidos pelo índice full-text (sem índice de coluna próprio).
+const FTS_FILTER_KEYS = ['cid_10'];
+// Todos os filtros aceitos (coluna indexada + full-text) — usado pelo servidor.
+const ALL_FILTER_KEYS = [...FILTER_KEYS, ...FTS_FILTER_KEYS];
 // Colunas baixa-cardinalidade que viram dropdown de filtro no front-end.
-const DISTINCT_KEYS = ['estado_funcionario', 'sexo'];
+const DISTINCT_KEYS = ['estado_funcionario'];
 
 // ---------------------------------------------------------------------------
 // Cache leve: o total de registros (sem filtro) só muda quando os dados mudam.
@@ -103,29 +107,44 @@ function distinctValues(col) {
 // Consulta da lista: busca full-text (q) + filtros por coluna + paginação.
 // ---------------------------------------------------------------------------
 
-// Converte a busca do usuário em uma expressão FTS5 (prefixo por palavra, com
-// AND implícito). Dígitos viram um termo próprio (acha CPF por números).
+// Tokens de prefixo para o FTS5 (cada palavra vira "palavra*", com AND implícito).
+function prefixTerms(text) {
+  const tokens = String(text).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return tokens.map((t) => `${t}*`).join(' ');
+}
+
+// Converte a busca do usuário em uma expressão FTS5. Além dos prefixos por
+// palavra, se houver muitos dígitos junta-os num termo (acha CPF por números).
 function ftsQuery(q) {
-  const tokens = String(q).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-  if (tokens.length === 0) return null;
-  const terms = tokens.map((t) => `${t}*`);
+  let terms = prefixTerms(q);
   const digits = String(q).replace(/\D/g, '');
-  if (digits.length >= 3 && !tokens.includes(digits)) terms.push(`${digits}*`);
-  return terms.join(' ');
+  if (digits.length >= 3 && !terms.includes(`${digits}*`)) terms += ` ${digits}*`;
+  return terms.trim() || null;
 }
 
 // Monta FROM/WHERE/params a partir de q + filtros.
+// - q + filtros full-text (ex.: CID-10) viram uma única expressão MATCH no FTS.
+// - filtros com índice de coluna (estado, município) viram LIKE por prefixo.
 function buildQuery({ q = '', filters = {} } = {}) {
   const where = [];
   const params = [];
   let from = 'FROM records r';
 
-  const fq = q ? ftsQuery(q) : null;
-  if (fq) {
+  const ftsTerms = [];
+  if (q) { const fq = ftsQuery(q); if (fq) ftsTerms.push(fq); }
+  for (const k of FTS_FILTER_KEYS) {
+    const val = filters[k];
+    if (val != null && String(val).trim() !== '') {
+      const t = prefixTerms(String(val).trim());
+      if (t) ftsTerms.push(t);
+    }
+  }
+  if (ftsTerms.length) {
     from += ' JOIN records_fts ON records_fts.rowid = r._rowid';
     where.push('records_fts MATCH ?');
-    params.push(fq);
+    params.push(ftsTerms.join(' '));
   }
+
   for (const k of FILTER_KEYS) {
     const val = filters[k];
     if (val != null && String(val).trim() !== '') {
@@ -135,7 +154,7 @@ function buildQuery({ q = '', filters = {} } = {}) {
     }
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const filtered = Boolean(fq) || where.length > 0;
+  const filtered = where.length > 0;
   return { from, whereSql, params, filtered };
 }
 
@@ -212,10 +231,54 @@ function streamCsv({ q = '', filters = {} } = {}, write) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// FACETAS / DISTRIBUIÇÃO: quantidades por valor (Estado, Município, CID),
+// respeitando a busca/filtros atuais. Pesado em bases grandes, então o caso
+// "sem filtro" fica em cache (só recalcula quando os dados mudam).
+// ---------------------------------------------------------------------------
+function topBy(col, limit, from, whereSql, params) {
+  const base = whereSql ? `${whereSql} AND ` : 'WHERE ';
+  return db.prepare(
+    `SELECT r."${col}" AS value, COUNT(*) AS n ${from} ${base}
+       r."${col}" IS NOT NULL AND TRIM(r."${col}") <> ''
+     GROUP BY r."${col}" COLLATE NOCASE ORDER BY n DESC LIMIT ?`,
+  ).all(...params, limit);
+}
+
+function facets({ q = '', filters = {} } = {}) {
+  const { from, whereSql, params, filtered } = buildQuery({ q, filters });
+  const compute = () => ({
+    total: filtered
+      ? db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n
+      : cached('total', () => db.prepare('SELECT COUNT(*) AS n FROM records').get().n),
+    byEstado: topBy('estado_funcionario', 40, from, whereSql, params),
+    byMunicipio: topBy('municipio_funcionario', 12, from, whereSql, params),
+    byCid: topBy('cid_10', 12, from, whereSql, params),
+  });
+  return filtered ? compute() : cached('facets', compute);
+}
+
+// Exporta a distribuição (contagens por Estado/Município/CID) em CSV.
+function facetsCsv({ q = '', filters = {} } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters });
+  const lines = ['Dimensão,Valor,Quantidade'];
+  const dims = [['Estado', 'estado_funcionario', 100], ['Município', 'municipio_funcionario', 1000], ['CID-10', 'cid_10', 1000]];
+  for (const [label, col, lim] of dims) {
+    for (const r of topBy(col, lim, from, whereSql, params)) {
+      lines.push([label, csvEscape(r.value), r.n].join(','));
+    }
+  }
+  return lines.join('\r\n');
+}
+
 module.exports = {
   COLUMN_KEYS,
   FILTER_KEYS,
+  FTS_FILTER_KEYS,
+  ALL_FILTER_KEYS,
   DISTINCT_KEYS,
+  facets,
+  facetsCsv,
   formatCPF,
   buildSearchText,
   insertRow,

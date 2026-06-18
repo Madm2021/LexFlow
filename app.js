@@ -1,8 +1,8 @@
 'use strict';
 
-const FILTER_KEYS = ['estado_funcionario', 'sexo', 'municipio_funcionario', 'bairro_funcionario'];
+const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario', 'cid_10'];
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {} };
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, distOpen: false };
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
@@ -38,29 +38,41 @@ function toast(msg, type = '') {
 
 const fmt = (n) => Number(n).toLocaleString('pt-BR');
 
-// Junta busca + filtros num querystring (usado na lista e na exportação).
+// ===== Tema claro/escuro =====
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  $('#theme-toggle').textContent = theme === 'light' ? '☀️' : '🌙';
+  try { localStorage.setItem('lexflow-theme', theme); } catch (e) { /* ignora */ }
+}
+function initTheme() {
+  let theme;
+  try { theme = localStorage.getItem('lexflow-theme'); } catch (e) { /* ignora */ }
+  if (!theme) theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  applyTheme(theme);
+}
+
+// ===== Querystring com busca + filtros =====
 function queryParams(extra = {}) {
   const p = new URLSearchParams({ q: state.q, ...extra });
   for (const k of FILTER_KEYS) if (state.filters[k]) p.set(k, state.filters[k]);
   return p;
 }
+function hasFilters() { return FILTER_KEYS.some((k) => state.filters[k]); }
 
 async function loadStats() {
   try {
     const s = await api('/api/stats');
     $('#stat-records').textContent = fmt(s.records);
-    $('#stat-columns').textContent = fmt(s.columns);
     $('#stat-imports').textContent = fmt(s.imports);
   } catch (e) { /* silencioso */ }
 }
 
-// --- Lista de registros ---
+// ===== Lista de registros =====
 async function loadRecords() {
   const viewer = $('#viewer');
+  const meta = $('#results-meta');
   const params = queryParams({ limit: state.limit, offset: state.offset, dir: state.dir });
   if (state.sort) params.set('sort', state.sort);
-
-  // Mantém o link de exportação coerente com busca + filtros atuais.
   $('#export-link').href = `/api/export.csv?${queryParams()}`;
 
   let data;
@@ -69,11 +81,19 @@ async function loadRecords() {
   } catch (e) { viewer.innerHTML = `<div class="empty-state"><p>${e.message}</p></div>`; return; }
 
   const { columns, rows, total, limit, offset } = data;
+  const filtered = state.q || hasFilters();
 
-  if (total === 0 && !state.q && !hasFilters()) {
-    viewer.innerHTML = '<div class="empty-state"><p>Sua lista está vazia. Suba planilhas acima para começar.</p></div>';
+  if (total === 0) {
+    meta.textContent = '';
+    viewer.innerHTML = filtered
+      ? '<div class="empty-state"><p>Nenhum registro encontrado para essa busca/filtro.</p></div>'
+      : '<div class="empty-state"><p>Use a busca acima ou os filtros para consultar a base. Para adicionar dados, clique em <strong>⤓ Importar</strong>.</p></div>';
     return;
   }
+
+  const ctx = state.q ? ` para “${state.q}”` : '';
+  meta.innerHTML = `<span class="big-total">${fmt(total)}</span> <span class="meta-sub">registro(s)${ctx}${hasFilters() ? ' (filtrado)' : ''}</span>`;
+  if (state.distOpen) loadFacets();
 
   const headerCells = [{ column_name: '_source_file', original_name: 'Origem' }, ...columns];
   const thead = el('thead', {}, [el('tr', {}, headerCells.map((c) => {
@@ -86,12 +106,15 @@ async function loadRecords() {
         state.offset = 0;
         loadRecords();
       },
-    }, [document.createTextNode(c.original_name + arrow)]);
+    }, [c.original_name + arrow]);
   }))]);
 
   const tbody = el('tbody', {}, rows.map((row) => el('tr', {}, headerCells.map((c) => {
     const v = row[c.column_name];
-    const td = el('td', { class: c.column_name === '_source_file' ? 'origin' : '' });
+    let cls = '';
+    if (c.column_name === '_source_file') cls = 'origin';
+    else if (c.column_name === 'cpf') cls = 'cpf';
+    const td = el('td', { class: cls });
     if (v == null || v === '') td.appendChild(el('span', { class: 'null', text: '—' }));
     else td.textContent = String(v);
     return td;
@@ -99,14 +122,13 @@ async function loadRecords() {
 
   const table = el('div', { class: 'table-wrap' }, [el('table', {}, [thead, tbody])]);
 
-  const from = total === 0 ? 0 : offset + 1;
+  const from = offset + 1;
   const to = Math.min(offset + limit, total);
-  const filterNote = (state.q || hasFilters()) ? ' (filtrado)' : '';
   const pager = el('div', { class: 'pager' }, [
-    el('div', { class: 'info', text: `Mostrando ${fmt(from)}–${fmt(to)} de ${fmt(total)} registro(s)${filterNote}` }),
+    el('div', { class: 'info', text: `Mostrando ${fmt(from)}–${fmt(to)} de ${fmt(total)}` }),
     el('div', { class: 'controls' }, [
-      el('button', { class: 'ghost small', text: '◀ Anterior', disabled: offset <= 0 ? '' : null, onClick: () => { state.offset = Math.max(0, offset - limit); loadRecords(); } }),
-      el('button', { class: 'ghost small', text: 'Próxima ▶', disabled: to >= total ? '' : null, onClick: () => { state.offset = offset + limit; loadRecords(); } }),
+      el('button', { class: 'btn ghost small', text: '◀ Anterior', disabled: offset <= 0 ? '' : null, onClick: () => { state.offset = Math.max(0, offset - limit); loadRecords(); } }),
+      el('button', { class: 'btn ghost small', text: 'Próxima ▶', disabled: to >= total ? '' : null, onClick: () => { state.offset = offset + limit; loadRecords(); } }),
     ]),
   ]);
 
@@ -114,7 +136,45 @@ async function loadRecords() {
   viewer.append(table, pager);
 }
 
-// --- Upload ---
+// ===== Filtros =====
+function applyFilters() {
+  for (const k of FILTER_KEYS) {
+    const node = $(`[data-filter="${k}"]`);
+    const v = node ? node.value.trim() : '';
+    if (v) state.filters[k] = v; else delete state.filters[k];
+  }
+  $('#filter-clear').hidden = !hasFilters();
+  state.offset = 0;
+  loadRecords();
+}
+function clearFilters() {
+  state.filters = {};
+  FILTER_KEYS.forEach((k) => { const n = $(`[data-filter="${k}"]`); if (n) n.value = ''; });
+  $('#filter-clear').hidden = true;
+  state.offset = 0;
+  loadRecords();
+}
+async function loadFilterOptions() {
+  for (const col of ['estado_funcionario']) {
+    const sel = $(`[data-filter="${col}"]`);
+    if (!sel || sel.tagName !== 'SELECT') continue;
+    try {
+      const values = await api(`/api/distinct?col=${col}`);
+      const current = state.filters[col] || '';
+      sel.innerHTML = '<option value="">Todos</option>';
+      values.forEach((v) => sel.appendChild(el('option', { value: v, text: v })));
+      sel.value = current;
+    } catch (e) { /* silencioso */ }
+  }
+}
+
+// ===== Importação (modal) =====
+function openImport() {
+  $('#import-modal').hidden = false;
+  loadImports();
+}
+function closeImport() { $('#import-modal').hidden = true; }
+
 async function uploadFiles(files) {
   if (!files || files.length === 0) return;
   const fb = $('#upload-feedback');
@@ -132,22 +192,19 @@ async function uploadFiles(files) {
     });
     (res.errors || []).forEach((e) => fb.appendChild(el('div', { class: 'line err', text: `✕ ${e.file}: ${e.error}` })));
     state.offset = 0;
-    await Promise.all([loadStats(), loadRecords(), loadFilterOptions()]);
+    await Promise.all([loadStats(), loadRecords(), loadFilterOptions(), loadImports()]);
   } catch (e) {
     fb.innerHTML = `<div class="line err">✕ ${e.message}</div>`;
   }
 }
 
-// --- Painel de planilhas importadas ---
-async function toggleImports() {
+async function loadImports() {
   const panel = $('#imports-panel');
-  if (!panel.hidden) { panel.hidden = true; return; }
-  panel.hidden = false;
   panel.innerHTML = '<div class="spinner">Carregando...</div>';
   try {
     const list = await api('/api/imports');
     panel.innerHTML = '';
-    if (list.length === 0) { panel.appendChild(el('p', { class: 'spinner', text: 'Nenhuma planilha importada ainda.' })); return; }
+    if (list.length === 0) { panel.innerHTML = '<div class="spinner">Nenhuma planilha importada ainda.</div>'; return; }
     panel.appendChild(el('h3', { text: 'Planilhas importadas' }));
     list.forEach((imp) => {
       panel.appendChild(el('div', { class: 'import-row' }, [
@@ -155,7 +212,7 @@ async function toggleImports() {
           el('div', { class: 'imp-name', text: imp.source_file }),
           el('div', { class: 'imp-meta', text: `${fmt(imp.rows_added)} adicionadas · ${fmt(imp.rows_skipped)} ignoradas · ${new Date(imp.imported_at).toLocaleString('pt-BR')}` }),
         ]),
-        el('button', { class: 'danger small', text: 'Remover dados', onClick: () => removeImport(imp.source_file) }),
+        el('button', { class: 'btn ghost small danger-text', text: 'Remover', onClick: () => removeImport(imp.source_file) }),
       ]));
     });
   } catch (e) { panel.innerHTML = `<div class="spinner">${e.message}</div>`; }
@@ -166,72 +223,71 @@ async function removeImport(file) {
   try {
     const r = await api(`/api/imports?source_file=${encodeURIComponent(file)}`, { method: 'DELETE' });
     toast(`${fmt(r.removed)} registro(s) removido(s).`, 'ok');
-    $('#imports-panel').hidden = true;
-    await Promise.all([loadStats(), loadRecords(), loadFilterOptions()]);
+    await Promise.all([loadStats(), loadRecords(), loadFilterOptions(), loadImports()]);
   } catch (e) { toast(e.message, 'err'); }
 }
 
-// --- Filtros por coluna ---
-function hasFilters() {
-  return FILTER_KEYS.some((k) => state.filters[k]);
+// ===== Distribuição (quantidades por valor) =====
+function distBars(title, items) {
+  const max = items.reduce((m, x) => Math.max(m, x.n), 0) || 1;
+  const rows = items.map((x) => el('div', { class: 'bar-row' }, [
+    el('span', { class: 'bar-label', title: String(x.value || '—'), text: String(x.value || '—') }),
+    el('span', { class: 'bar-track' }, [el('span', { class: 'bar-fill', style: `width:${Math.max(3, (x.n / max) * 100)}%` })]),
+    el('span', { class: 'bar-val', text: fmt(x.n) }),
+  ]));
+  return el('div', { class: 'dist-col' }, [el('h4', { text: title }), ...rows]);
+}
+function annotateEstado(byEstado) {
+  const sel = $('[data-filter="estado_funcionario"]');
+  if (!sel) return;
+  const map = {};
+  (byEstado || []).forEach((x) => { if (x.value) map[String(x.value).toUpperCase()] = x.n; });
+  Array.from(sel.options).forEach((o) => { if (o.value) o.textContent = `${o.value} (${fmt(map[o.value.toUpperCase()] || 0)})`; });
+}
+async function loadFacets() {
+  if (!state.distOpen) return;
+  const panel = $('#dist-panel');
+  panel.innerHTML = '<div class="spinner">Calculando as quantidades... (pode levar alguns segundos em bases grandes)</div>';
+  let d;
+  try { d = await api(`/api/facets?${queryParams()}`); }
+  catch (e) { panel.innerHTML = `<div class="spinner">${e.message}</div>`; return; }
+  panel.innerHTML = '';
+  panel.append(
+    el('div', { class: 'dist-head' }, [
+      el('div', {}, [el('strong', { text: '📊 Distribuição' }), el('span', { class: 'meta-sub', text: ` · ${fmt(d.total)} registro(s) no recorte atual` })]),
+      el('a', { href: `/api/facets.csv?${queryParams()}`, class: 'btn ghost small' }, ['⤒ Exportar contagem']),
+    ]),
+    el('div', { class: 'dist-grid' }, [
+      distBars('Por Estado', d.byEstado),
+      distBars('Top Municípios', d.byMunicipio),
+      distBars('Top CID-10', d.byCid),
+    ]),
+  );
+  annotateEstado(d.byEstado);
+}
+function toggleDist() {
+  state.distOpen = !state.distOpen;
+  $('#dist-panel').hidden = !state.distOpen;
+  $('#dist-btn').classList.toggle('active', state.distOpen);
+  if (state.distOpen) loadFacets();
 }
 
-function applyFilters() {
-  for (const k of FILTER_KEYS) {
-    const node = $(`[data-filter="${k}"]`);
-    const v = node ? node.value.trim() : '';
-    if (v) state.filters[k] = v; else delete state.filters[k];
-  }
-  $('#filter-clear').hidden = !hasFilters();
-  state.offset = 0;
-  loadRecords();
-}
-
-function clearFilters() {
-  state.filters = {};
-  FILTER_KEYS.forEach((k) => { const n = $(`[data-filter="${k}"]`); if (n) n.value = ''; });
-  $('#filter-clear').hidden = true;
-  state.offset = 0;
-  loadRecords();
-}
-
-// Preenche os dropdowns (estado, sexo) com os valores existentes na base.
-async function loadFilterOptions() {
-  for (const col of ['estado_funcionario', 'sexo']) {
-    const sel = $(`[data-filter="${col}"]`);
-    if (!sel || sel.tagName !== 'SELECT') continue;
-    try {
-      const values = await api(`/api/distinct?col=${col}`);
-      const current = state.filters[col] || '';
-      sel.innerHTML = '<option value="">todos</option>';
-      values.forEach((v) => sel.appendChild(el('option', { value: v, text: v })));
-      sel.value = current;
-    } catch (e) { /* silencioso */ }
-  }
-}
-
-// --- Wiring ---
-function debounce(fn, ms) {
-  let t;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-}
+// ===== Wiring =====
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
 function init() {
-  const dz = $('#dropzone');
-  const input = $('#file-input');
-  dz.addEventListener('click', () => input.click());
-  input.addEventListener('change', () => { uploadFiles(input.files); input.value = ''; });
-  ['dragover', 'dragenter'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
-  ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
-  dz.addEventListener('drop', (e) => uploadFiles(e.dataTransfer.files));
+  initTheme();
+  $('#theme-toggle').addEventListener('click', () => {
+    applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+  });
 
+  // Busca
   const runSearch = () => { state.q = $('#search').value.trim(); state.offset = 0; $('#search-clear').hidden = !state.q; loadRecords(); };
   $('#search-btn').addEventListener('click', runSearch);
   $('#search').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
   $('#search-clear').addEventListener('click', () => { $('#search').value = ''; state.q = ''; $('#search-clear').hidden = true; state.offset = 0; loadRecords(); });
-  $('#imports-btn').addEventListener('click', toggleImports);
 
-  // Filtros: selects mudam na hora; campos de texto com pequeno atraso.
+  // Filtros
   const debApply = debounce(applyFilters, 350);
   FILTER_KEYS.forEach((k) => {
     const node = $(`[data-filter="${k}"]`);
@@ -241,7 +297,20 @@ function init() {
   });
   $('#filter-clear').addEventListener('click', clearFilters);
 
-  // Mostra o botão "Sair" apenas quando o acesso é protegido por senha.
+  // Importação
+  $('#dist-btn').addEventListener('click', toggleDist);
+  $('#import-btn').addEventListener('click', openImport);
+  document.querySelectorAll('[data-close-modal]').forEach((n) => n.addEventListener('click', closeImport));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeImport(); });
+  const dz = $('#dropzone');
+  const input = $('#file-input');
+  dz.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { uploadFiles(input.files); input.value = ''; });
+  ['dragover', 'dragenter'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
+  dz.addEventListener('drop', (e) => uploadFiles(e.dataTransfer.files));
+
+  // Mostra "Sair" só quando há senha
   api('/api/auth').then((a) => { if (a.enabled) $('#logout-link').hidden = false; }).catch(() => {});
 
   loadStats();

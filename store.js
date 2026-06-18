@@ -266,12 +266,37 @@ function warmStart() {
 }
 
 // ---------------------------------------------------------------------------
-// HIGIENIZAÇÃO em lotes: normaliza CPF (zero à esquerda + dígito verificador)
-// e datas, marcando _cpf_ok (1/0). Roda em pedaços por cursor de _rowid, sem
-// travar (chunks com pausa), e é idempotente (pode rodar de novo a qualquer hora).
+// HIGIENIZAÇÃO em lotes, em duas fases, sem travar (chunks com pausa):
+//  Fase "keys" (RÁPIDA, em bloco no SQL): preenche a chave de identidade _key
+//    direto da coluna CAT (e do CPF já validado), sem trazer linha por linha
+//    para o JS. É o que destrava o "reunir duplicados" em ~minutos, não horas.
+//  Fase "rows" (linha a linha): normaliza CPF/datas APENAS dos registros ainda
+//    não processados (_cpf_ok IS NULL) — novas importações já entram
+//    normalizadas no insert, então aqui sobra pouco ou nada.
+// Idempotente: pode rodar de novo a qualquer hora.
 // ---------------------------------------------------------------------------
-let hygiene = { running: false, cursor: 0 };
-const hygieneSel = db.prepare('SELECT _rowid, cat, cpf, data_nascimento, _search FROM records WHERE _rowid > ? ORDER BY _rowid LIMIT ?');
+const KEY_SPAN = 100000; // faixa de _rowid por lote na fase rápida
+
+// Extração de dígitos no próprio SQL (CAT usa . - / e espaço; CPF usa . - ).
+const CATDIG = "replace(replace(replace(replace(cat,'.',''),'-',''),'/',''),' ','')";
+const CPFDIG = "replace(replace(replace(cpf,'.',''),'-',''),' ','')";
+
+let hygiene = { running: false, phase: null, cursor: 0, keyCursor: 0, keyMax: 0 };
+// Fase rápida: CAT tem prioridade; CPF válido só onde ainda não há chave.
+const keyCatUpd = db.prepare(
+  `UPDATE records SET _key = 'cat:' || ${CATDIG}
+   WHERE _rowid > ? AND _rowid <= ? AND _key IS NULL AND cat IS NOT NULL
+     AND length(${CATDIG}) > 0 AND ${CATDIG} NOT GLOB '*[^0-9]*'`,
+);
+const keyCpfUpd = db.prepare(
+  `UPDATE records SET _key = 'cpf:' || ${CPFDIG}
+   WHERE _rowid > ? AND _rowid <= ? AND _key IS NULL AND _cpf_ok = 1
+     AND length(${CPFDIG}) = 11 AND ${CPFDIG} NOT GLOB '*[^0-9]*'`,
+);
+const maxRowid = () => db.prepare('SELECT MAX(_rowid) AS m FROM records').get().m || 0;
+
+// Fase lenta: só os registros ainda NÃO processados (sem _cpf_ok).
+const hygieneSel = db.prepare('SELECT _rowid, cat, cpf, data_nascimento, _search FROM records WHERE _rowid > ? AND _cpf_ok IS NULL ORDER BY _rowid LIMIT ?');
 const hygieneUpd = db.prepare('UPDATE records SET cpf = ?, data_nascimento = ?, _cpf_ok = ?, _key = ?, _search = ? WHERE _rowid = ?');
 
 function hygieneStats() {
@@ -282,27 +307,44 @@ function hygieneStats() {
 }
 
 function getHygieneJob() {
-  return { running: hygiene.running, ...hygieneStats() };
+  return {
+    running: hygiene.running,
+    phase: hygiene.phase,
+    keyDone: Math.min(hygiene.keyCursor, hygiene.keyMax),
+    keyTotal: hygiene.keyMax,
+    ...hygieneStats(),
+  };
 }
 
 function startHygiene() {
   if (hygiene.running) return getHygieneJob();
-  hygiene = { running: true, cursor: 0 };
+  hygiene = { running: true, phase: 'keys', cursor: 0, keyCursor: 0, keyMax: maxRowid() };
   return getHygieneJob();
 }
 
-// Processa um lote; retorna quantas linhas tratou (0 = terminou).
+// Processa um lote; retorna >0 enquanto há trabalho, 0 quando terminou.
 function hygieneStep(chunk = 4000) {
   if (!hygiene.running) return 0;
-  const rows = hygieneSel.all(hygiene.cursor, chunk);
-  if (rows.length === 0) {
-    hygiene.running = false;
-    // Marca que a chave de identidade já foi preenchida em toda a base. É isso
-    // que libera (e torna confiável) a etapa de "reunir duplicados".
-    setPersist('flag:keys_built', true);
-    bumpData();
-    return 0;
+
+  // --- Fase rápida: preenche _key em bloco, por faixa de _rowid. ---
+  if (hygiene.phase === 'keys') {
+    const lo = hygiene.keyCursor;
+    const hi = Math.min(hygiene.keyMax, lo + KEY_SPAN);
+    db.transaction(() => { keyCatUpd.run(lo, hi); keyCpfUpd.run(lo, hi); })();
+    hygiene.keyCursor = hi;
+    if (hi >= hygiene.keyMax) {
+      // Chave preenchida em toda a base: libera o "reunir duplicados".
+      setPersist('flag:keys_built', true);
+      hygiene.phase = 'rows';
+      hygiene.cursor = 0;
+      bumpData();
+    }
+    return KEY_SPAN;
   }
+
+  // --- Fase lenta: normaliza só os ainda não processados. ---
+  const rows = hygieneSel.all(hygiene.cursor, chunk);
+  if (rows.length === 0) { hygiene.running = false; hygiene.phase = null; bumpData(); return 0; }
   const tx = db.transaction(() => {
     for (const r of rows) {
       const c = normalizeCpf(r.cpf);

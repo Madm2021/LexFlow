@@ -14,13 +14,13 @@ const db = new Database(DB_PATH);
 
 // Ajustes de desempenho para importar e consultar milhões de linhas sem travar.
 // - WAL + synchronous=NORMAL: rápido e seguro para gravar lotes.
-// - cache_size negativo = KB. -262144 = 256 MB de cache de páginas. Em servidor
-//   com muita RAM pode aumentar; em servidor pequeno (≤1 GB) reduza p/ -65536.
+// - cache_size negativo = KB. -262144 = 256 MB de cache de páginas.
 // - mmap_size: 1 GB do banco mapeado em memória (acelera leitura).
-// - temp_store=MEMORY: ordenações/temporárias na RAM.
+// Obs.: NÃO usamos temp_store=MEMORY de propósito. Operações grandes (VACUUM,
+// reconstrução do índice full-text em milhões de linhas) criam temporárias
+// enormes; mantê-las em disco (padrão) evita estourar a memória do servidor.
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
-db.pragma('temp_store = MEMORY');
 db.pragma('cache_size = -262144');
 db.pragma('mmap_size = 1073741824');
 
@@ -110,17 +110,11 @@ function migrateLegacyIfNeeded() {
   });
   migrate();
   try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
-  // Recupera o espaço em disco liberado pela tabela antiga (o schema novo é
-  // muito menor). O VACUUM reescreve o banco só com os dados vivos. É
-  // best-effort: se faltar espaço temporário, a migração já está OK e o app
-  // funciona — o arquivo só fica maior até o próximo VACUUM.
-  try {
-    console.log('LexFlow: compactando o banco (VACUUM) para liberar espaço...');
-    db.exec('VACUUM');
-    console.log('LexFlow: banco compactado.');
-  } catch (e) {
-    console.error('LexFlow: VACUUM falhou (sem espaço temporário?), seguindo mesmo assim:', e.message);
-  }
+  // Não rodamos VACUUM automático: em bases de milhões de linhas ele é lento e
+  // pesado, e o espaço em disco geralmente não é o gargalo. As páginas
+  // liberadas pela tabela antiga ficam reutilizáveis dentro do próprio arquivo.
+  // Se algum dia quiser reduzir o arquivo, rode `VACUUM` manualmente fora do
+  // horário de uso.
   const n = db.prepare('SELECT COUNT(*) AS n FROM records').get().n;
   console.log(`LexFlow: migração concluída — ${n.toLocaleString('pt-BR')} registros no novo formato.`);
   return true;

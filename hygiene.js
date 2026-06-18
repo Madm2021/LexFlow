@@ -71,4 +71,24 @@ function normalizeDate(raw) {
   return s; // não reconhecido: mantém
 }
 
-module.exports = { isValidCPF, normalizeCpf, normalizeDate, excelSerialToDate };
+// --- Chave de identidade (deduplicação flexível) -----------------------------
+
+// Decide, para cada registro, qual identificador usar — em cascata, do mais
+// forte ao mais fraco. Retorna a chave (string) ou null quando não há
+// identificador confiável (aí o registro só junta cópias idênticas, via _hash).
+//
+//   1) Tem CAT?            -> "cat:<digitos>"  (1 caso por CAT; mesma pessoa com
+//                              2 CATs vira 2 registros, como deve ser)
+//   2) Não tem CAT, CPF
+//      válido?             -> "cpf:<digitos>"  (CPF identifica a pessoa; junta
+//                              os acidentes/registros dela sem CAT)
+//   3) Nenhum dos dois     -> null             (sem identidade forte)
+function recordKey(values) {
+  const cat = onlyDigits(values && values.cat != null ? values.cat : '');
+  if (cat) return `cat:${cat}`;
+  const cpf = normalizeCpf(values ? values.cpf : null);
+  if (cpf.ok) return `cpf:${onlyDigits(cpf.value)}`;
+  return null;
+}
+
+module.exports = { isValidCPF, normalizeCpf, normalizeDate, excelSerialToDate, recordKey };

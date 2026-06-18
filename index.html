@@ -97,9 +97,20 @@
           <strong>🧼 Higienização da base</strong>
           <button id="hygiene-btn" class="btn primary small">Higienizar agora</button>
         </div>
-        <div class="imp-meta">Formata o CPF, recupera o zero à esquerda, valida o dígito verificador (marca válido/inválido) e converte datas. Roda <strong>uma vez</strong>, em segundo plano, sem travar — e novas planilhas já entram higienizadas.</div>
+        <div class="imp-meta">Formata o CPF, recupera o zero à esquerda, valida o dígito verificador (marca válido/inválido) e converte datas. Também prepara a <strong>chave de identidade</strong> (CAT/CPF) que evita duplicatas e permite <strong>enriquecer</strong> cadastros nas próximas planilhas. Roda <strong>uma vez</strong>, em segundo plano, sem travar.</div>
         <div id="hygiene-stats" class="hygiene-stats"></div>
         <div id="hygiene-progress" class="maint-progress" hidden></div>
+      </div>
+
+      <!-- Reunir duplicados antigos (Fase 2): junta cópias do mesmo caso/pessoa -->
+      <div id="dedup-box" class="hygiene-box">
+        <div class="hygiene-head">
+          <strong>🧹 Reunir duplicados antigos</strong>
+          <button id="dedup-btn" class="btn primary small">Reunir agora</button>
+        </div>
+        <div class="imp-meta">Junta as cópias do mesmo caso/pessoa (mesma <strong>CAT</strong> ou <strong>CPF</strong>) que já estavam na base, fundindo os dados num único registro (preenche vazios e acumula contatos) e removendo as repetições. <strong>Remove linhas</strong> — rode a higienização antes. Faça uma vez; as próximas planilhas já entram sem duplicar.</div>
+        <div id="dedup-stats" class="hygiene-stats"></div>
+        <div id="dedup-progress" class="maint-progress" hidden></div>
       </div>
 
       <div id="imports-panel" class="imports-panel"></div>

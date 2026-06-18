@@ -193,10 +193,65 @@ function pollHygiene() {
   tick();
 }
 async function startHygiene() {
-  if (!confirm('Higienizar a base agora?\n\nRoda UMA vez, em segundo plano — você pode continuar usando o sistema normalmente. Pode levar alguns minutos numa base grande. As próximas planilhas já entram higienizadas automaticamente.')) return;
+  if (!confirm('Higienizar a base agora?\n\nRoda UMA vez, em segundo plano — você pode continuar usando o sistema normalmente. Pode levar alguns minutos numa base grande. Além de limpar CPF e datas, prepara a chave de identidade (CAT/CPF) que evita duplicatas e permite enriquecer cadastros nas próximas planilhas. Não apaga nada.')) return;
   try { await api('/api/hygiene', { method: 'POST' }); } catch (e) { toast(e.message, 'err'); return; }
   toast('Higienização iniciada (em segundo plano).', 'ok');
   pollHygiene();
+}
+// ===== Reunir duplicados antigos (Fase 2) =====
+function dedupStatsHtml(j) {
+  if (j.running) return `<span class="hg-pend">Reunindo... ${fmt(j.removed)} duplicado(s) removido(s)</span>`;
+  if (j.hygienePending > 0) {
+    return `<span class="hg-bad">⚠ Rode a higienização primeiro</span> · `
+      + `<span class="hg-pend">${fmt(j.hygienePending)} registro(s) ainda sem chave de identidade</span>`;
+  }
+  if (!j.duplicates) return '<span class="hg-ok">✓ Nenhum duplicado antigo a reunir</span>';
+  return `<span class="hg-pend">${fmt(j.duplicates)} duplicado(s) antigo(s) podem ser reunidos</span>`;
+}
+async function loadDedup() {
+  try {
+    const j = await api('/api/dedup');
+    $('#dedup-stats').innerHTML = dedupStatsHtml(j);
+    $('#dedup-btn').disabled = j.running || (!j.running && (j.hygienePending > 0 || !j.duplicates));
+    if (j.running) pollDedup();
+  } catch (e) { /* silencioso */ }
+}
+function pollDedup() {
+  $('#dedup-btn').disabled = true;
+  const box = $('#dedup-progress');
+  const tick = async () => {
+    let j;
+    try { j = await api('/api/dedup'); } catch (e) { setTimeout(tick, 2000); return; }
+    if (j.running) {
+      box.hidden = false;
+      box.innerHTML = `<div class="maint-prog-label">Reunindo duplicados... ${fmt(j.removed)} removido(s) em ${fmt(j.groups)} grupo(s)</div>`
+        + '<div class="maint-prog-track"><div class="maint-prog-fill" style="width:100%;animation:pulse 1.2s infinite"></div></div>';
+      $('#dedup-stats').innerHTML = dedupStatsHtml(j);
+      setTimeout(tick, 1500);
+      return;
+    }
+    box.hidden = true;
+    $('#dedup-stats').innerHTML = dedupStatsHtml(j);
+    $('#dedup-btn').disabled = !j.duplicates;
+    toast(`Duplicados reunidos! ${fmt(j.removed)} removido(s). 🧹`, 'ok');
+    loadStats();
+    loadRecords();
+  };
+  tick();
+}
+async function startDedup() {
+  let j;
+  try { j = await api('/api/dedup'); } catch (e) { toast(e.message, 'err'); return; }
+  if (j.hygienePending > 0) { toast('Rode a higienização primeiro.', 'err'); return; }
+  if (!j.duplicates) { toast('Nenhum duplicado antigo a reunir.', 'ok'); return; }
+  const msg = `Reunir ${fmt(j.duplicates)} duplicado(s) antigo(s) agora?\n\n`
+    + 'Os dados são FUNDIDOS num único registro (preenche vazios e acumula contatos) e as cópias são REMOVIDAS. '
+    + 'Esta etapa apaga linhas e não pode ser desfeita — exporte um backup (⤓) antes, se quiser. '
+    + 'Roda em segundo plano, sem travar.';
+  if (!confirm(msg)) return;
+  try { await api('/api/dedup', { method: 'POST' }); } catch (e) { toast(e.message, 'err'); return; }
+  toast('Reunião de duplicados iniciada (em segundo plano).', 'ok');
+  pollDedup();
 }
 async function loadFilterOptions() {
   for (const col of ['estado_funcionario']) {
@@ -217,6 +272,7 @@ function openImport() {
   $('#import-modal').hidden = false;
   loadImports();
   loadHygiene();
+  loadDedup();
 }
 function closeImport() { $('#import-modal').hidden = true; }
 
@@ -230,10 +286,12 @@ async function uploadFiles(files) {
     const res = await api('/api/upload', { method: 'POST', body: form });
     fb.innerHTML = '';
     (res.imported || []).forEach((r) => {
+      const enr = r.merged > 0 ? ` · ${fmt(r.merged)} cadastro(s) enriquecido(s)` : '';
       const dup = r.skipped > 0 ? ` · ${fmt(r.skipped)} duplicada(s) ignorada(s)` : '';
-      const cls = r.added > 0 ? 'ok' : 'warn';
-      const icon = r.added > 0 ? '✓' : '🔁';
-      fb.appendChild(el('div', { class: `line ${cls}`, text: `${icon} ${r.file}: ${fmt(r.added)} nova(s)${dup}` }));
+      const useful = r.added > 0 || r.merged > 0;
+      const cls = useful ? 'ok' : 'warn';
+      const icon = useful ? '✓' : '🔁';
+      fb.appendChild(el('div', { class: `line ${cls}`, text: `${icon} ${r.file}: ${fmt(r.added)} nova(s)${enr}${dup}` }));
     });
     (res.errors || []).forEach((e) => fb.appendChild(el('div', { class: 'line err', text: `✕ ${e.file}: ${e.error}` })));
     state.offset = 0;
@@ -255,7 +313,7 @@ async function loadImports() {
       panel.appendChild(el('div', { class: 'import-row' }, [
         el('div', {}, [
           el('div', { class: 'imp-name', text: imp.source_file }),
-          el('div', { class: 'imp-meta', text: `${fmt(imp.rows_added)} adicionadas · ${fmt(imp.rows_skipped)} ignoradas · ${new Date(imp.imported_at).toLocaleString('pt-BR')}` }),
+          el('div', { class: 'imp-meta', text: `${fmt(imp.rows_added)} adicionadas${imp.rows_merged > 0 ? ` · ${fmt(imp.rows_merged)} enriquecidas` : ''} · ${fmt(imp.rows_skipped)} ignoradas · ${new Date(imp.imported_at).toLocaleString('pt-BR')}` }),
         ]),
         el('button', { class: 'btn ghost small danger-text', text: 'Remover', onClick: () => removeImport(imp.source_file) }),
       ]));
@@ -343,6 +401,7 @@ function init() {
   $('#filter-clear').addEventListener('click', clearFilters);
   $('#f-valid-cpf').addEventListener('change', (e) => { state.validCpf = e.target.checked; $('#filter-clear').hidden = !hasFilters(); state.offset = 0; loadRecords(); });
   $('#hygiene-btn').addEventListener('click', startHygiene);
+  $('#dedup-btn').addEventListener('click', startDedup);
 
   // Importação
   $('#dist-btn').addEventListener('click', toggleDist);

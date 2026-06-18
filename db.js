@@ -12,17 +12,17 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const db = new Database(DB_PATH);
 
-// Ajustes de desempenho para importar e consultar milhões de linhas sem travar.
+// Ajustes para rodar LEVE numa máquina com RAM limitada (~24 GB), sem travar.
 // - WAL + synchronous=NORMAL: rápido e seguro para gravar lotes.
-// - cache_size negativo = KB. -262144 = 256 MB de cache de páginas.
-// - mmap_size: 1 GB do banco mapeado em memória (acelera leitura).
-// Obs.: NÃO usamos temp_store=MEMORY de propósito. Operações grandes (VACUUM,
-// reconstrução do índice full-text em milhões de linhas) criam temporárias
-// enormes; mantê-las em disco (padrão) evita estourar a memória do servidor.
+// - cache_size = 128 MB e mmap_size = 256 MB (modestos): o índice/FTS guiam as
+//   consultas, então não precisamos de cache gigante. O sistema operacional
+//   ainda faz cache de disco (reciclável) por cima.
+// - NÃO usamos temp_store=MEMORY: operações grandes mandam temporárias para o
+//   disco (volume de 1 TB), em vez de estourar a memória.
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
-db.pragma('cache_size = -262144');
-db.pragma('mmap_size = 1073741824');
+db.pragma('cache_size = -131072');
+db.pragma('mmap_size = 268435456');
 
 // Constantes de esquema vêm de schema.js (compartilhadas com o worker).
 const { COLUMNS, COLUMN_KEYS, FILTER_KEYS, META_COLUMNS } = require('./schema');
@@ -167,6 +167,14 @@ for (const k of FILTER_KEYS) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_${k} ON records("${k}" COLLATE NOCASE)`);
   }
 }
+
+// Higienização: _cpf_ok marca a validade do CPF (1 válido, 0 inválido, NULL =
+// ainda não processado). Índice parcial só sobre os já processados (fica vazio
+// e instantâneo até a higienização rodar) — acelera o filtro "Apenas CPF válido".
+if (!tableColumns('records').includes('_cpf_ok')) {
+  db.exec('ALTER TABLE records ADD COLUMN _cpf_ok INTEGER');
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_cpf_ok ON records(_cpf_ok) WHERE _cpf_ok IS NOT NULL');
 
 // Popula o índice full-text a partir dos dados existentes quando a tabela FTS
 // acabou de ser criada (1ª vez ou logo após a migração). Em reinícios normais

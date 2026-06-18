@@ -82,7 +82,8 @@ class MappedBuilder {
         if (v !== '') { val = v; break; }
       }
       if (val !== '') {
-        out[f.key] = f.key === 'cpf' ? store.formatCPF(val) : val;
+        // CPF e data são higienizados no insert (store.insertRow); aqui vai cru.
+        out[f.key] = val;
         any = true;
       }
     }

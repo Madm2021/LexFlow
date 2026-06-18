@@ -127,6 +127,8 @@ app.get('/api/columns', (req, res) => res.json(store.getColumns()));
 // --- Valores distintos de uma coluna (para os dropdowns de filtro) ---
 app.get('/api/distinct', wrap(async (req, res) => res.json(await store.distinctValues(req.query.col || ''))));
 
+const validCpfParam = (req) => req.query.valid_cpf === '1';
+
 // --- Lista de registros (paginação / busca full-text / filtros / ordenação) ---
 app.get('/api/records', (req, res) => {
   res.json(store.query({
@@ -134,18 +136,36 @@ app.get('/api/records', (req, res) => {
     offset: req.query.offset,
     q: req.query.q || '',
     filters: readFilters(req),
+    validCpf: validCpfParam(req),
     sort: req.query.sort || null,
     dir: req.query.dir || 'asc',
   }));
 });
 
+// --- Higienização da base (CPF + datas), em lotes, sem travar ---
+function driveHygiene() {
+  if (!store.getHygieneJob().running) return;
+  let n = 0;
+  try { n = store.hygieneStep(4000); } catch (e) { console.error('hygiene:', e.message); }
+  // Lotes com pausa: deixa o servidor respirar (não trava nem pesa a memória).
+  if (store.getHygieneJob().running) setTimeout(driveHygiene, n > 0 ? 120 : 1000);
+  else { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ } }
+}
+app.post('/api/hygiene', (req, res) => {
+  if (store.getHygieneJob().running) return res.status(409).json({ error: 'Higienização já em andamento.' });
+  store.startHygiene();
+  setTimeout(driveHygiene, 50);
+  res.json({ ok: true });
+});
+app.get('/api/hygiene', (req, res) => res.json(store.getHygieneJob()));
+
 // --- Distribuição / facetas (quantidades por Estado, Município, CID) ---
 // Roda na thread de trabalho (worker), então não trava o servidor.
 app.get('/api/facets', wrap(async (req, res) => {
-  res.json(await store.facets({ q: (req.query.q || '').trim(), filters: readFilters(req) }));
+  res.json(await store.facets({ q: (req.query.q || '').trim(), filters: readFilters(req), validCpf: validCpfParam(req) }));
 }));
 app.get('/api/facets.csv', wrap(async (req, res) => {
-  const csv = await store.facetsCsv({ q: (req.query.q || '').trim(), filters: readFilters(req) });
+  const csv = await store.facetsCsv({ q: (req.query.q || '').trim(), filters: readFilters(req), validCpf: validCpfParam(req) });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lexflow_distribuicao.csv"');
   res.send('﻿' + csv);
@@ -159,7 +179,7 @@ app.get('/api/export.csv', (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lexflow_dados.csv"');
   res.write('﻿'); // BOM para o Excel reconhecer UTF-8
-  store.streamCsv({ q: (req.query.q || '').trim(), filters: readFilters(req) }, (chunk) => res.write(chunk));
+  store.streamCsv({ q: (req.query.q || '').trim(), filters: readFilters(req), validCpf: validCpfParam(req) }, (chunk) => res.write(chunk));
   res.end();
 });
 

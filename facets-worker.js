@@ -10,8 +10,8 @@ const core = require('./querycore');
 
 const DB_PATH = process.env.LEXFLOW_DB || path.join(__dirname, 'data', 'lexflow.db');
 const db = new Database(DB_PATH, { readonly: true });
-db.pragma('cache_size = -262144');
-db.pragma('mmap_size = 1073741824');
+db.pragma('cache_size = -131072');
+db.pragma('mmap_size = 268435456');
 
 parentPort.on('message', (msg) => {
   const { id, type, payload } = msg;

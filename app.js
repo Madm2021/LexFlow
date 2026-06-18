@@ -2,7 +2,7 @@
 
 const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario', 'cid_10'];
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, distOpen: false };
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, validCpf: false, distOpen: false };
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
@@ -55,9 +55,10 @@ function initTheme() {
 function queryParams(extra = {}) {
   const p = new URLSearchParams({ q: state.q, ...extra });
   for (const k of FILTER_KEYS) if (state.filters[k]) p.set(k, state.filters[k]);
+  if (state.validCpf) p.set('valid_cpf', '1');
   return p;
 }
-function hasFilters() { return FILTER_KEYS.some((k) => state.filters[k]); }
+function hasFilters() { return state.validCpf || FILTER_KEYS.some((k) => state.filters[k]); }
 
 async function loadStats() {
   try {
@@ -149,10 +150,54 @@ function applyFilters() {
 }
 function clearFilters() {
   state.filters = {};
+  state.validCpf = false;
+  const vc = $('#f-valid-cpf'); if (vc) vc.checked = false;
   FILTER_KEYS.forEach((k) => { const n = $(`[data-filter="${k}"]`); if (n) n.value = ''; });
   $('#filter-clear').hidden = true;
   state.offset = 0;
   loadRecords();
+}
+
+// ===== Higienização da base =====
+function hygieneStatsHtml(j) {
+  return `<span class="hg-ok">✓ ${fmt(j.valid)} com CPF válido</span> · `
+    + `<span class="hg-bad">${fmt(j.invalid)} inválidos</span>`
+    + (j.pendente ? ` · <span class="hg-pend">${fmt(j.pendente)} a processar</span>` : '');
+}
+async function loadHygiene() {
+  try {
+    const j = await api('/api/hygiene');
+    $('#hygiene-stats').innerHTML = hygieneStatsHtml(j);
+    if (j.running) pollHygiene();
+  } catch (e) { /* silencioso */ }
+}
+function pollHygiene() {
+  $('#hygiene-btn').disabled = true;
+  const tick = async () => {
+    let j;
+    try { j = await api('/api/hygiene'); } catch (e) { setTimeout(tick, 2000); return; }
+    const total = j.total || 1;
+    const done = j.valid + j.invalid;
+    const pct = Math.min(100, Math.round((done / total) * 100));
+    const box = $('#hygiene-progress');
+    box.hidden = false;
+    box.innerHTML = `<div class="maint-prog-label">Higienizando... ${fmt(done)} de ${fmt(total)}</div>`
+      + `<div class="maint-prog-track"><div class="maint-prog-fill" style="width:${pct}%"></div></div>`
+      + `<div class="maint-prog-pct">${pct}%</div>`;
+    $('#hygiene-stats').innerHTML = hygieneStatsHtml(j);
+    if (j.running) { setTimeout(tick, 1500); return; }
+    box.hidden = true;
+    $('#hygiene-btn').disabled = false;
+    toast('Higienização concluída! 🧼', 'ok');
+    loadStats();
+  };
+  tick();
+}
+async function startHygiene() {
+  if (!confirm('Higienizar a base agora?\n\nRoda UMA vez, em segundo plano — você pode continuar usando o sistema normalmente. Pode levar alguns minutos numa base grande. As próximas planilhas já entram higienizadas automaticamente.')) return;
+  try { await api('/api/hygiene', { method: 'POST' }); } catch (e) { toast(e.message, 'err'); return; }
+  toast('Higienização iniciada (em segundo plano).', 'ok');
+  pollHygiene();
 }
 async function loadFilterOptions() {
   for (const col of ['estado_funcionario']) {
@@ -172,6 +217,7 @@ async function loadFilterOptions() {
 function openImport() {
   $('#import-modal').hidden = false;
   loadImports();
+  loadHygiene();
 }
 function closeImport() { $('#import-modal').hidden = true; }
 
@@ -296,6 +342,8 @@ function init() {
     else node.addEventListener('input', debApply);
   });
   $('#filter-clear').addEventListener('click', clearFilters);
+  $('#f-valid-cpf').addEventListener('change', (e) => { state.validCpf = e.target.checked; $('#filter-clear').hidden = !hasFilters(); state.offset = 0; loadRecords(); });
+  $('#hygiene-btn').addEventListener('click', startHygiene);
 
   // Importação
   $('#dist-btn').addEventListener('click', toggleDist);

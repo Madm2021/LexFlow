@@ -55,6 +55,7 @@
         <label for="f-cid_10">CID-10</label>
         <input id="f-cid_10" data-filter="cid_10" placeholder="ex.: S62" autocomplete="off" />
       </div>
+      <label class="check-field"><input type="checkbox" id="f-valid-cpf" /> Apenas CPF válido</label>
       <button id="filter-clear" class="btn ghost small" hidden>Limpar filtros</button>
     </section>
 
@@ -89,6 +90,18 @@
         </div>
       </div>
       <div id="upload-feedback" class="feedback"></div>
+
+      <!-- Higienização da base (uma vez; novas planilhas já entram limpas) -->
+      <div id="hygiene-box" class="hygiene-box">
+        <div class="hygiene-head">
+          <strong>🧼 Higienização da base</strong>
+          <button id="hygiene-btn" class="btn primary small">Higienizar agora</button>
+        </div>
+        <div class="imp-meta">Formata o CPF, recupera o zero à esquerda, valida o dígito verificador (marca válido/inválido) e converte datas. Roda <strong>uma vez</strong>, em segundo plano, sem travar — e novas planilhas já entram higienizadas.</div>
+        <div id="hygiene-stats" class="hygiene-stats"></div>
+        <div id="hygiene-progress" class="maint-progress" hidden></div>
+      </div>
+
       <div id="imports-panel" class="imports-panel"></div>
     </div>
   </div>

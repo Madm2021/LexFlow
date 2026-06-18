@@ -125,7 +125,7 @@ app.get('/api/stats', (req, res) => res.json(store.getStats()));
 app.get('/api/columns', (req, res) => res.json(store.getColumns()));
 
 // --- Valores distintos de uma coluna (para os dropdowns de filtro) ---
-app.get('/api/distinct', (req, res) => res.json(store.distinctValues(req.query.col || '')));
+app.get('/api/distinct', wrap(async (req, res) => res.json(await store.distinctValues(req.query.col || ''))));
 
 // --- Lista de registros (paginação / busca full-text / filtros / ordenação) ---
 app.get('/api/records', (req, res) => {
@@ -140,14 +140,16 @@ app.get('/api/records', (req, res) => {
 });
 
 // --- Distribuição / facetas (quantidades por Estado, Município, CID) ---
-app.get('/api/facets', (req, res) => {
-  res.json(store.facets({ q: (req.query.q || '').trim(), filters: readFilters(req) }));
-});
-app.get('/api/facets.csv', (req, res) => {
+// Roda na thread de trabalho (worker), então não trava o servidor.
+app.get('/api/facets', wrap(async (req, res) => {
+  res.json(await store.facets({ q: (req.query.q || '').trim(), filters: readFilters(req) }));
+}));
+app.get('/api/facets.csv', wrap(async (req, res) => {
+  const csv = await store.facetsCsv({ q: (req.query.q || '').trim(), filters: readFilters(req) });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lexflow_distribuicao.csv"');
-  res.send('﻿' + store.facetsCsv({ q: (req.query.q || '').trim(), filters: readFilters(req) }));
-});
+  res.send('﻿' + csv);
+}));
 
 // --- Histórico de importações ---
 app.get('/api/imports', (req, res) => res.json(store.listImports()));
@@ -187,6 +189,8 @@ if (require.main === module) {
   const server = app.listen(PORT, () => {
     console.log(`LexFlow rodando em http://localhost:${PORT}`);
     console.log(`Banco de dados: ${DB_PATH}`);
+    // Pré-calcula a distribuição no worker (não trava o servidor).
+    setTimeout(() => { try { store.warmStart(); } catch (e) { console.error('warmStart:', e.message); } }, 2000);
   });
   // Uploads grandes e lentos podem passar do limite padrão de 5 min do Node.
   server.requestTimeout = 60 * 60 * 1000;

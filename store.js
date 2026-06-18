@@ -1,6 +1,7 @@
 'use strict';
 
 const { db, COLUMNS, COLUMN_KEYS, FILTER_KEYS } = require('./db');
+const { normalizeUF, variantsFor } = require('./uf');
 
 // Filtros resolvidos pelo índice full-text (sem índice de coluna próprio).
 const FTS_FILTER_KEYS = ['cid_10'];
@@ -94,13 +95,23 @@ function getStats() {
 }
 
 // Valores distintos de uma coluna de filtro (para os dropdowns do front).
+// Para Estado, normaliza para a sigla (junta "SP"/"SAO PAULO") e descarta lixo
+// (datas, cidades, valores que não são UF). Em cache (não muda sem reimport).
 function distinctValues(col) {
   if (!DISTINCT_KEYS.includes(col)) return [];
-  return db.prepare(
-    `SELECT "${col}" AS v, COUNT(*) AS n FROM records
-     WHERE "${col}" IS NOT NULL AND "${col}" <> ''
-     GROUP BY "${col}" COLLATE NOCASE ORDER BY n DESC LIMIT 500`,
-  ).all().map((r) => r.v);
+  return cached(`distinct:${col}`, () => {
+    const raw = db.prepare(
+      `SELECT "${col}" AS v, COUNT(*) AS n FROM records
+       WHERE "${col}" IS NOT NULL AND "${col}" <> ''
+       GROUP BY "${col}" COLLATE NOCASE ORDER BY n DESC LIMIT 2000`,
+    ).all();
+    if (col === 'estado_funcionario') {
+      const m = new Map();
+      for (const r of raw) { const uf = normalizeUF(r.v); if (uf) m.set(uf, (m.get(uf) || 0) + r.n); }
+      return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([uf]) => uf);
+    }
+    return raw.map((r) => r.v);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -147,10 +158,17 @@ function buildQuery({ q = '', filters = {} } = {}) {
 
   for (const k of FILTER_KEYS) {
     const val = filters[k];
-    if (val != null && String(val).trim() !== '') {
+    if (val == null || String(val).trim() === '') continue;
+    const v = String(val).trim();
+    if (k === 'estado_funcionario') {
+      // Casa todas as variações da UF (ex.: "SP" e "SAO PAULO").
+      const vars = variantsFor(v);
+      where.push(`(${vars.map(() => `r."${k}" LIKE ?`).join(' OR ')})`);
+      vars.forEach((x) => params.push(`${x}%`));
+    } else {
       // Prefixo, sem acento/maiúsculas (índice COLLATE NOCASE acelera).
       where.push(`r."${k}" LIKE ?`);
-      params.push(`${String(val).trim()}%`);
+      params.push(`${v}%`);
     }
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -240,35 +258,50 @@ function topBy(col, limit, from, whereSql, params) {
   const base = whereSql ? `${whereSql} AND ` : 'WHERE ';
   return db.prepare(
     `SELECT r."${col}" AS value, COUNT(*) AS n ${from} ${base}
-       r."${col}" IS NOT NULL AND TRIM(r."${col}") <> ''
+       r."${col}" IS NOT NULL AND r."${col}" <> ''
      GROUP BY r."${col}" COLLATE NOCASE ORDER BY n DESC LIMIT ?`,
   ).all(...params, limit);
 }
 
+// Contagem por Estado já normalizada (junta "SP"/"SAO PAULO", descarta lixo).
+function estadoCounts(from, whereSql, params, limit) {
+  const raw = topBy('estado_funcionario', 200, from, whereSql, params);
+  const m = new Map();
+  for (const r of raw) { const uf = normalizeUF(r.value); if (uf) m.set(uf, (m.get(uf) || 0) + r.n); }
+  return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([value, n]) => ({ value, n }));
+}
+
 function facets({ q = '', filters = {} } = {}) {
-  const { from, whereSql, params, filtered } = buildQuery({ q, filters });
-  const compute = () => ({
-    total: filtered
-      ? db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n
-      : cached('total', () => db.prepare('SELECT COUNT(*) AS n FROM records').get().n),
-    byEstado: topBy('estado_funcionario', 40, from, whereSql, params),
-    byMunicipio: topBy('municipio_funcionario', 12, from, whereSql, params),
-    byCid: topBy('cid_10', 12, from, whereSql, params),
+  // Cacheia por recorte (busca + filtros). Some quando os dados mudam.
+  return cached(`facets:${JSON.stringify({ q, filters })}`, () => {
+    const { from, whereSql, params, filtered } = buildQuery({ q, filters });
+    return {
+      total: filtered
+        ? db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n
+        : cached('total', () => db.prepare('SELECT COUNT(*) AS n FROM records').get().n),
+      byEstado: estadoCounts(from, whereSql, params, 40),
+      byMunicipio: topBy('municipio_funcionario', 12, from, whereSql, params),
+      byCid: topBy('cid_10', 12, from, whereSql, params),
+    };
   });
-  return filtered ? compute() : cached('facets', compute);
 }
 
 // Exporta a distribuição (contagens por Estado/Município/CID) em CSV.
 function facetsCsv({ q = '', filters = {} } = {}) {
   const { from, whereSql, params } = buildQuery({ q, filters });
   const lines = ['Dimensão,Valor,Quantidade'];
-  const dims = [['Estado', 'estado_funcionario', 100], ['Município', 'municipio_funcionario', 1000], ['CID-10', 'cid_10', 1000]];
-  for (const [label, col, lim] of dims) {
-    for (const r of topBy(col, lim, from, whereSql, params)) {
-      lines.push([label, csvEscape(r.value), r.n].join(','));
-    }
-  }
+  const push = (label, rows) => rows.forEach((r) => lines.push([label, csvEscape(r.value), r.n].join(',')));
+  push('Estado', estadoCounts(from, whereSql, params, 100));
+  push('Município', topBy('municipio_funcionario', 1000, from, whereSql, params));
+  push('CID-10', topBy('cid_10', 1000, from, whereSql, params));
   return lines.join('\r\n');
+}
+
+// Pré-aquece o cache (distribuição sem filtro + dropdown de Estado) para que a
+// primeira abertura do painel seja instantânea. Chamado na inicialização.
+function warm() {
+  try { distinctValues('estado_funcionario'); } catch (e) { console.error('warm distinct:', e.message); }
+  try { facets(); } catch (e) { console.error('warm facets:', e.message); }
 }
 
 module.exports = {
@@ -279,6 +312,7 @@ module.exports = {
   DISTINCT_KEYS,
   facets,
   facetsCsv,
+  warm,
   formatCPF,
   buildSearchText,
   insertRow,

@@ -135,6 +135,13 @@ db.exec(`
   );
 `);
 
+// Coluna de "registros enriquecidos" no histórico (cadastros existentes que a
+// planilha nova complementou, em vez de duplicar). Adicionada via ALTER para
+// não quebrar históricos já criados.
+if (!tableColumns('imports').includes('rows_merged')) {
+  db.exec('ALTER TABLE imports ADD COLUMN rows_merged INTEGER NOT NULL DEFAULT 0');
+}
+
 // Índice full-text para busca global (qualquer palavra, sem acento). Usa
 // "external content" (não duplica os dados) e triggers para manter sincronia.
 // Se a tabela FTS ainda não existia (1ª vez / pós-migração), precisamos
@@ -183,6 +190,18 @@ if (!tableColumns('records').includes('_cpf_ok')) {
   db.exec('ALTER TABLE records ADD COLUMN _cpf_ok INTEGER');
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_cpf_ok ON records(_cpf_ok) WHERE _cpf_ok IS NOT NULL');
+
+// Chave de identidade flexível (CAT, ou CPF) usada para NÃO duplicar e para
+// ENRIQUECER o cadastro quando chega uma planilha nova com a mesma pessoa/caso.
+// NULL = ainda não calculada (rodar a higienização preenche). Índice parcial
+// (só sobre os já preenchidos) torna a consulta na importação instantânea.
+// Importante: este índice é NÃO único de propósito — a base atual ainda tem
+// duplicados antigos, e um índice único falharia. A remoção dos antigos é uma
+// etapa separada (Fase 2), feita só quando solicitado.
+if (!tableColumns('records').includes('_key')) {
+  db.exec('ALTER TABLE records ADD COLUMN _key TEXT');
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_key ON records(_key) WHERE _key IS NOT NULL');
 
 // Popula o índice full-text a partir dos dados existentes quando a tabela FTS
 // acabou de ser criada (1ª vez ou logo após a migração). Em reinícios normais

@@ -48,6 +48,7 @@ class MappedBuilder {
     this.batch = [];
     this.added = 0;
     this.skipped = 0;
+    this.merged = 0;
   }
 
   setHeader(header) {
@@ -104,7 +105,9 @@ class MappedBuilder {
           hash,
           values: mapped,
         });
-        if (changed === 1) this.added += 1; else this.skipped += 1;
+        if (changed === 1) this.added += 1;
+        else if (changed === 2) this.merged += 1;
+        else this.skipped += 1;
       }
     });
     tx();
@@ -121,8 +124,11 @@ class MappedBuilder {
   finish() {
     if (!this.header || this.width === 0 || !this.hasMapping) return null;
     this._flush();
-    store.recordImport(this.sourceFile, this.sheetName, this.added, this.skipped);
-    return { source_file: this.sourceFile, sheet_name: this.sheetName, added: this.added, skipped: this.skipped };
+    store.recordImport(this.sourceFile, this.sheetName, this.added, this.skipped, this.merged);
+    return {
+      source_file: this.sourceFile, sheet_name: this.sheetName,
+      added: this.added, skipped: this.skipped, merged: this.merged,
+    };
   }
 }
 
@@ -248,7 +254,8 @@ async function importFilePath(filePath, filename) {
   }
   const added = results.reduce((a, r) => a + r.added, 0);
   const skipped = results.reduce((a, r) => a + r.skipped, 0);
-  return { file: filename, added, skipped, sheets: results };
+  const merged = results.reduce((a, r) => a + r.merged, 0);
+  return { file: filename, added, skipped, merged, sheets: results };
 }
 
 async function importFile(buffer, filename) {

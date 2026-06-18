@@ -5,7 +5,7 @@ const { Worker } = require('worker_threads');
 const { db } = require('./db');
 const { COLUMNS, COLUMN_KEYS, FILTER_KEYS, FTS_FILTER_KEYS, ALL_FILTER_KEYS, DISTINCT_KEYS } = require('./schema');
 const core = require('./querycore');
-const { normalizeCpf, normalizeDate } = require('./hygiene');
+const { normalizeCpf, normalizeDate, recordKey } = require('./hygiene');
 
 // ---------------------------------------------------------------------------
 // Caches: memória (por versão dos dados) + persistente em app_cache (sobrevive
@@ -93,28 +93,95 @@ function buildSearchText(values, sourceFile) {
   return parts.join(' ').toLowerCase();
 }
 
-const INSERT_COLS = ['_source_file', '_imported_at', '_hash', '_search', '_cpf_ok', ...COLUMN_KEYS];
+const INSERT_COLS = ['_source_file', '_imported_at', '_hash', '_key', '_search', '_cpf_ok', ...COLUMN_KEYS];
 const insertStmt = db.prepare(
   `INSERT OR IGNORE INTO records (${INSERT_COLS.map((c) => `"${c}"`).join(', ')})
    VALUES (${INSERT_COLS.map(() => '?').join(', ')})`,
 );
+
+// ---------------------------------------------------------------------------
+// ENRIQUECIMENTO no import: quando a planilha nova traz uma pessoa/caso que JÁ
+// existe (mesma chave de identidade), em vez de duplicar, completa o cadastro.
+//  - Campo vazio  -> preenche com o valor novo.
+//  - Campo de CONTATO/endereço que já tem valor e vem outro diferente -> ACUMULA
+//    os dois ("1111 / 2222"), sem repetir o que já está lá.
+//  - Campos de identidade (nome, CPF, nascimento, etc.) -> mantém o atual (só
+//    preenche se estiver vazio); nunca acumula, para não virar lixo.
+// ---------------------------------------------------------------------------
+const ACCUMULATE_KEYS = new Set([
+  'telefone_funcionario', 'telefone1', 'telefone2', 'telefone3',
+  'email', 'endereco_funcionario', 'observacoes',
+]);
+const SEP = ' / ';
+
+const selectByKeyStmt = db.prepare(
+  `SELECT _rowid, _source_file, ${COLUMN_KEYS.map((k) => `"${k}"`).join(', ')}
+   FROM records WHERE _key = ? ORDER BY _rowid LIMIT 1`,
+);
+const updateMergeStmt = db.prepare(
+  `UPDATE records SET ${COLUMN_KEYS.map((k) => `"${k}" = ?`).join(', ')}, _cpf_ok = ?, _search = ?
+   WHERE _rowid = ?`,
+);
+
+// Resolve o valor final de um campo na fusão (regras acima).
+function mergeField(key, oldV, newV) {
+  const o = oldV == null ? '' : String(oldV).trim();
+  const n = newV == null ? '' : String(newV).trim();
+  if (n === '') return o === '' ? null : o;     // nada novo a acrescentar
+  if (o === '') return n;                        // preenche o vazio
+  if (o === n) return o;                         // idêntico: mantém
+  if (!ACCUMULATE_KEYS.has(key)) return o;       // identidade: mantém o atual
+  // Acumula sem repetir (compara cada pedaço já existente, sem diferenciar caixa).
+  const parts = o.split(SEP).map((t) => t.trim()).filter(Boolean);
+  if (parts.some((t) => t.toLowerCase() === n.toLowerCase())) return o;
+  return o + SEP + n;
+}
+
+// Funde os valores novos no registro existente. Retorna true se algo mudou.
+function mergeIntoExisting(existing, values) {
+  const merged = {};
+  let changed = false;
+  for (const k of COLUMN_KEYS) {
+    const before = existing[k] == null ? null : String(existing[k]);
+    const after = mergeField(k, existing[k], values[k]);
+    merged[k] = after;
+    if ((after == null ? null : String(after)) !== before) changed = true;
+  }
+  if (!changed) return false;                    // a planilha nova não acrescentou nada
+  const cpf = normalizeCpf(merged.cpf);
+  merged.cpf = cpf.value;
+  const search = buildSearchText(merged, existing._source_file);
+  updateMergeStmt.run(
+    ...COLUMN_KEYS.map((k) => (merged[k] == null || merged[k] === '' ? null : merged[k])),
+    cpf.ok, search, existing._rowid,
+  );
+  return true;
+}
+
+// Retorna: 1 = novo registro adicionado · 2 = cadastro existente enriquecido ·
+// 0 = nada (duplicata idêntica / sem novidade).
 function insertRow({ sourceFile, importedAt, hash, values }) {
   // Higieniza já na entrada: CPF (formato + zero à esquerda + validade) e data.
   const cpf = normalizeCpf(values.cpf);
   values.cpf = cpf.value;
   if ('data_nascimento' in values) values.data_nascimento = normalizeDate(values.data_nascimento);
+  const key = recordKey(values);
+  if (key) {
+    const existing = selectByKeyStmt.get(key);
+    if (existing) return mergeIntoExisting(existing, values) ? 2 : 0;
+  }
   const search = buildSearchText(values, sourceFile);
   const info = insertStmt.run(
-    sourceFile, importedAt, hash, search, cpf.ok,
+    sourceFile, importedAt, hash, key, search, cpf.ok,
     ...COLUMN_KEYS.map((k) => (values[k] == null || values[k] === '' ? null : values[k])),
   );
   return info.changes;
 }
 
-function recordImport(sourceFile, sheetName, rowsAdded, rowsSkipped) {
+function recordImport(sourceFile, sheetName, rowsAdded, rowsSkipped, rowsMerged = 0) {
   db.prepare(
-    'INSERT INTO imports (source_file, sheet_name, rows_added, rows_skipped, imported_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(sourceFile, sheetName || null, rowsAdded, rowsSkipped, new Date().toISOString());
+    'INSERT INTO imports (source_file, sheet_name, rows_added, rows_skipped, rows_merged, imported_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(sourceFile, sheetName || null, rowsAdded, rowsSkipped, rowsMerged, new Date().toISOString());
   bumpData();
 }
 
@@ -201,8 +268,8 @@ function warmStart() {
 // travar (chunks com pausa), e é idempotente (pode rodar de novo a qualquer hora).
 // ---------------------------------------------------------------------------
 let hygiene = { running: false, cursor: 0 };
-const hygieneSel = db.prepare('SELECT _rowid, cpf, data_nascimento, _search FROM records WHERE _rowid > ? ORDER BY _rowid LIMIT ?');
-const hygieneUpd = db.prepare('UPDATE records SET cpf = ?, data_nascimento = ?, _cpf_ok = ?, _search = ? WHERE _rowid = ?');
+const hygieneSel = db.prepare('SELECT _rowid, cat, cpf, data_nascimento, _search FROM records WHERE _rowid > ? ORDER BY _rowid LIMIT ?');
+const hygieneUpd = db.prepare('UPDATE records SET cpf = ?, data_nascimento = ?, _cpf_ok = ?, _key = ?, _search = ? WHERE _rowid = ?');
 
 function hygieneStats() {
   const valid = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _cpf_ok = 1').get().n;
@@ -230,12 +297,13 @@ function hygieneStep(chunk = 4000) {
     for (const r of rows) {
       const c = normalizeCpf(r.cpf);
       const d = normalizeDate(r.data_nascimento);
+      const key = recordKey({ cat: r.cat, cpf: c.value, data_nascimento: d });
       let search = r._search || '';
       if (c.ok) {
         const dig = c.value.replace(/\D/g, '');
         if (dig && !search.includes(dig)) search += ` ${dig}`;
       }
-      hygieneUpd.run(c.value, d, c.ok, search, r._rowid);
+      hygieneUpd.run(c.value, d, c.ok, key, search, r._rowid);
     }
   });
   tx();

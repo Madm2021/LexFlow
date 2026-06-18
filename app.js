@@ -193,7 +193,7 @@ function pollHygiene() {
   tick();
 }
 async function startHygiene() {
-  if (!confirm('Higienizar a base agora?\n\nRoda UMA vez, em segundo plano — você pode continuar usando o sistema normalmente. Pode levar alguns minutos numa base grande. As próximas planilhas já entram higienizadas automaticamente.')) return;
+  if (!confirm('Higienizar a base agora?\n\nRoda UMA vez, em segundo plano — você pode continuar usando o sistema normalmente. Pode levar alguns minutos numa base grande. Além de limpar CPF e datas, prepara a chave de identidade (CAT/CPF) que evita duplicatas e permite enriquecer cadastros nas próximas planilhas. Não apaga nada.')) return;
   try { await api('/api/hygiene', { method: 'POST' }); } catch (e) { toast(e.message, 'err'); return; }
   toast('Higienização iniciada (em segundo plano).', 'ok');
   pollHygiene();
@@ -230,10 +230,12 @@ async function uploadFiles(files) {
     const res = await api('/api/upload', { method: 'POST', body: form });
     fb.innerHTML = '';
     (res.imported || []).forEach((r) => {
+      const enr = r.merged > 0 ? ` · ${fmt(r.merged)} cadastro(s) enriquecido(s)` : '';
       const dup = r.skipped > 0 ? ` · ${fmt(r.skipped)} duplicada(s) ignorada(s)` : '';
-      const cls = r.added > 0 ? 'ok' : 'warn';
-      const icon = r.added > 0 ? '✓' : '🔁';
-      fb.appendChild(el('div', { class: `line ${cls}`, text: `${icon} ${r.file}: ${fmt(r.added)} nova(s)${dup}` }));
+      const useful = r.added > 0 || r.merged > 0;
+      const cls = useful ? 'ok' : 'warn';
+      const icon = useful ? '✓' : '🔁';
+      fb.appendChild(el('div', { class: `line ${cls}`, text: `${icon} ${r.file}: ${fmt(r.added)} nova(s)${enr}${dup}` }));
     });
     (res.errors || []).forEach((e) => fb.appendChild(el('div', { class: 'line err', text: `✕ ${e.file}: ${e.error}` })));
     state.offset = 0;
@@ -255,7 +257,7 @@ async function loadImports() {
       panel.appendChild(el('div', { class: 'import-row' }, [
         el('div', {}, [
           el('div', { class: 'imp-name', text: imp.source_file }),
-          el('div', { class: 'imp-meta', text: `${fmt(imp.rows_added)} adicionadas · ${fmt(imp.rows_skipped)} ignoradas · ${new Date(imp.imported_at).toLocaleString('pt-BR')}` }),
+          el('div', { class: 'imp-meta', text: `${fmt(imp.rows_added)} adicionadas${imp.rows_merged > 0 ? ` · ${fmt(imp.rows_merged)} enriquecidas` : ''} · ${fmt(imp.rows_skipped)} ignoradas · ${new Date(imp.imported_at).toLocaleString('pt-BR')}` }),
         ]),
         el('button', { class: 'btn ghost small danger-text', text: 'Remover', onClick: () => removeImport(imp.source_file) }),
       ]));

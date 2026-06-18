@@ -35,8 +35,14 @@ distribuições e exportar.
   **Top CID-10**, sempre respeitando o filtro atual. Calculada numa **thread de
   trabalho (worker)** + **cache persistente** — não congela o servidor e abre
   instantânea depois do primeiro cálculo. Exporta a contagem em CSV.
-- **Deduplicação automática**: cada linha recebe um `_hash` com índice único.
-  Subir a mesma planilha de novo não duplica os dados.
+- **Deduplicação por identidade + enriquecimento**: cada registro recebe uma
+  **chave flexível** (`_key`) — usa a **CAT** quando existe; senão o **CPF**
+  válido; senão cai no `_hash` (linha idêntica). Ao importar, se a pessoa/caso
+  já existe, o sistema **não duplica** e ainda **complementa os campos vazios**
+  com o que vier de novo (telefone, e-mail, endereço). Campos de contato com
+  valores diferentes são **acumulados** (`1111 / 2222`, sem repetir); campos de
+  identidade (nome, CPF) são mantidos. A chave dos registros já existentes é
+  preenchida pela **higienização** (não apaga nada).
 - **Upload por arrastar-e-soltar**, vários arquivos por vez (`.xlsx`, `.xlsm`, `.csv`).
 - **Importação em streaming**: arquivos grandes (milhões de linhas) são lidos em
   lotes, com baixo uso de memória.
@@ -101,7 +107,11 @@ liberadas ficam reutilizáveis dentro do próprio arquivo.
 
 Todas as planilhas alimentam uma única tabela `records` com **colunas fixas** (as
 de `mapping.js`/`schema.js`). Cada linha recebe um `_hash` com índice único; a
-inserção usa `INSERT OR IGNORE`, então linhas idênticas são descartadas. Um
+inserção usa `INSERT OR IGNORE`, então linhas idênticas são descartadas. Além
+disso, cada registro tem uma **chave de identidade** `_key` (CAT, ou CPF
+válido; ver `recordKey` em `hygiene.js`) com índice não-único: no import, se a
+chave já existe, o registro é **fundido** (`mergeIntoExisting` em `store.js`) em
+vez de inserido — preenchendo vazios e acumulando contatos. Um
 índice **FTS5** (`records_fts`, *external content* + triggers) sobre um texto
 concatenado (`_search`) dá a busca instantânea; índices `COLLATE NOCASE` nas
 colunas de filtro dão o filtro por prefixo. A coluna `_cpf_ok` (com índice
@@ -147,7 +157,11 @@ data/            Banco SQLite (não versionado) — em produção, /data na Rail
 
 - O formato **`.xls` (Excel antigo, binário)** não é suportado — salve como `.xlsx`.
 - Apenas as **colunas pré-definidas** (`mapping.js`) são guardadas.
-- A deduplicação considera linhas **idênticas** (mesmos valores nas colunas).
+- A deduplicação por identidade usa **CAT** ou **CPF válido**; sem nenhum dos
+  dois, só junta linhas **idênticas** (mesmos valores nas colunas). Os
+  duplicados **antigos** (anteriores a esta regra) só são reunidos quando a
+  mesma chave reaparece num import; a limpeza em massa dos antigos é uma etapa
+  separada (ainda não habilitada).
 - O verificador de CPF confere o **dígito verificador** (se o número é
   matematicamente válido), **não** se ele pertence àquela pessoa — para isso só
   com a API paga da Receita Federal.

@@ -1,6 +1,8 @@
 'use strict';
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', view: 'clean', mode: 'list', minScore: 85, maxScore: null };
+const FILTER_KEYS = ['estado_funcionario', 'sexo', 'municipio_funcionario', 'bairro_funcionario'];
+
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {} };
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
@@ -36,6 +38,13 @@ function toast(msg, type = '') {
 
 const fmt = (n) => Number(n).toLocaleString('pt-BR');
 
+// Junta busca + filtros num querystring (usado na lista e na exportação).
+function queryParams(extra = {}) {
+  const p = new URLSearchParams({ q: state.q, ...extra });
+  for (const k of FILTER_KEYS) if (state.filters[k]) p.set(k, state.filters[k]);
+  return p;
+}
+
 async function loadStats() {
   try {
     const s = await api('/api/stats');
@@ -45,16 +54,14 @@ async function loadStats() {
   } catch (e) { /* silencioso */ }
 }
 
-// --- Lista única de registros ---
+// --- Lista de registros ---
 async function loadRecords() {
   const viewer = $('#viewer');
-  const params = new URLSearchParams({ limit: state.limit, offset: state.offset, q: state.q, dir: state.dir, view: state.view });
+  const params = queryParams({ limit: state.limit, offset: state.offset, dir: state.dir });
   if (state.sort) params.set('sort', state.sort);
 
-  // Atualiza o link de exportação para respeitar a busca e a visão atuais.
-  const exp = new URLSearchParams({ view: state.view });
-  if (state.q) exp.set('q', state.q);
-  $('#export-link').href = `/api/export.csv?${exp}`;
+  // Mantém o link de exportação coerente com busca + filtros atuais.
+  $('#export-link').href = `/api/export.csv?${queryParams()}`;
 
   let data;
   try {
@@ -63,13 +70,12 @@ async function loadRecords() {
 
   const { columns, rows, total, limit, offset } = data;
 
-  if (columns.length === 0) {
+  if (total === 0 && !state.q && !hasFilters()) {
     viewer.innerHTML = '<div class="empty-state"><p>Sua lista está vazia. Suba planilhas acima para começar.</p></div>';
     return;
   }
 
-  // Cabeçalho: "Origem" + colunas do catálogo (todas ordenáveis).
-  const headerCells = [{ column_name: '_source_file', original_name: 'Origem', data_type: 'text' }, ...columns];
+  const headerCells = [{ column_name: '_source_file', original_name: 'Origem' }, ...columns];
   const thead = el('thead', {}, [el('tr', {}, headerCells.map((c) => {
     const arrow = state.sort === c.column_name ? (state.dir === 'asc' ? ' ▲' : ' ▼') : '';
     return el('th', {
@@ -80,15 +86,12 @@ async function loadRecords() {
         state.offset = 0;
         loadRecords();
       },
-    }, [
-      document.createTextNode(c.original_name + arrow),
-      c.data_type !== 'text' ? el('span', { class: 'type-badge', text: c.data_type }) : null,
-    ]);
+    }, [document.createTextNode(c.original_name + arrow)]);
   }))]);
 
   const tbody = el('tbody', {}, rows.map((row) => el('tr', {}, headerCells.map((c) => {
     const v = row[c.column_name];
-    const td = el('td', { class: c.data_type === 'number' ? 'num' : (c.column_name === '_source_file' ? 'origin' : '') });
+    const td = el('td', { class: c.column_name === '_source_file' ? 'origin' : '' });
     if (v == null || v === '') td.appendChild(el('span', { class: 'null', text: '—' }));
     else td.textContent = String(v);
     return td;
@@ -98,8 +101,9 @@ async function loadRecords() {
 
   const from = total === 0 ? 0 : offset + 1;
   const to = Math.min(offset + limit, total);
+  const filterNote = (state.q || hasFilters()) ? ' (filtrado)' : '';
   const pager = el('div', { class: 'pager' }, [
-    el('div', { class: 'info', text: `Mostrando ${fmt(from)}–${fmt(to)} de ${fmt(total)} registro(s)${state.q ? ` (filtro: "${state.q}")` : ''}` }),
+    el('div', { class: 'info', text: `Mostrando ${fmt(from)}–${fmt(to)} de ${fmt(total)} registro(s)${filterNote}` }),
     el('div', { class: 'controls' }, [
       el('button', { class: 'ghost small', text: '◀ Anterior', disabled: offset <= 0 ? '' : null, onClick: () => { state.offset = Math.max(0, offset - limit); loadRecords(); } }),
       el('button', { class: 'ghost small', text: 'Próxima ▶', disabled: to >= total ? '' : null, onClick: () => { state.offset = offset + limit; loadRecords(); } }),
@@ -128,7 +132,7 @@ async function uploadFiles(files) {
     });
     (res.errors || []).forEach((e) => fb.appendChild(el('div', { class: 'line err', text: `✕ ${e.file}: ${e.error}` })));
     state.offset = 0;
-    await Promise.all([loadStats(), loadRecords()]);
+    await Promise.all([loadStats(), loadRecords(), loadFilterOptions()]);
   } catch (e) {
     fb.innerHTML = `<div class="line err">✕ ${e.message}</div>`;
   }
@@ -143,27 +147,6 @@ async function toggleImports() {
   try {
     const list = await api('/api/imports');
     panel.innerHTML = '';
-
-    // Manutenção: limpar casos sem indicação de sequela.
-    const maint = el('div', { class: 'maint-row' }, [
-      el('div', {}, [
-        el('strong', { text: '🧹 Limpeza por sequela' }),
-        el('div', { class: 'imp-meta', text: 'Remove casos sem indicação de sequela (lesão/CID). Mostra a contagem antes.' }),
-      ]),
-      el('button', { class: 'ghost small', text: 'Verificar e limpar', onClick: cleanupNoSequela }),
-    ]);
-    panel.appendChild(maint);
-
-    // Manutenção: deduplicar por CPF (mantém o melhor caso de cada pessoa).
-    const maintCpf = el('div', { class: 'maint-row' }, [
-      el('div', {}, [
-        el('strong', { text: '🆔 Deduplicar por CPF' }),
-        el('div', { class: 'imp-meta', text: 'Mantém só o caso de maior potencial (melhor sequela) por CPF e remove os repetidos. Rode após a formatação dos CPFs terminar.' }),
-      ]),
-      el('button', { class: 'ghost small', text: 'Verificar e deduplicar', onClick: dedupeByCpf }),
-    ]);
-    panel.appendChild(maintCpf);
-
     if (list.length === 0) { panel.appendChild(el('p', { class: 'spinner', text: 'Nenhuma planilha importada ainda.' })); return; }
     panel.appendChild(el('h3', { text: 'Planilhas importadas' }));
     list.forEach((imp) => {
@@ -178,236 +161,61 @@ async function toggleImports() {
   } catch (e) { panel.innerHTML = `<div class="spinner">${e.message}</div>`; }
 }
 
-// Mostra uma barra de progresso (no #imports-panel) durante a manutenção.
-function renderMaintProgress(j) {
-  let box = $('#maint-progress');
-  if (!box) {
-    box = el('div', { id: 'maint-progress', class: 'maint-progress' });
-    const panel = $('#imports-panel');
-    panel.insertBefore(box, panel.firstChild);
-  }
-  const pct = j.total ? Math.round((j.removed / j.total) * 100) : 0;
-  const label = j.phase === 'analisando'
-    ? 'Analisando registros... (pode levar 1–2 min)'
-    : `Removendo: ${fmt(j.removed)} de ${fmt(j.total)}`;
-  box.innerHTML = '';
-  box.append(
-    el('div', { class: 'maint-prog-label', text: label }),
-    el('div', { class: 'maint-prog-track' }, [el('div', { class: 'maint-prog-fill', style: `width:${j.phase === 'analisando' ? 8 : pct}%` })]),
-    el('div', { class: 'maint-prog-pct', text: j.phase === 'analisando' ? '...' : `${pct}%` }),
-  );
-}
-function clearMaintProgress() { const b = $('#maint-progress'); if (b) b.remove(); }
-
-function pollMaintenance(labelDone) {
-  const tick = async () => {
-    let j;
-    try { j = await api('/api/maintenance'); } catch (e) { setTimeout(tick, 2000); return; }
-    if (j.error) { clearMaintProgress(); toast('Erro: ' + j.error, 'err'); return; }
-    if (j.running) {
-      if (!$('#imports-panel').hidden) renderMaintProgress(j);
-      setTimeout(tick, 1200);
-    } else {
-      clearMaintProgress();
-      toast(`${labelDone}: ${fmt(j.removed)} registro(s) removido(s).`, 'ok');
-      await Promise.all([loadStats(), refresh()]);
-    }
-  };
-  tick();
-}
-
-async function startMaint(type, confirmMsg, labelDone) {
-  let cur;
-  try { cur = await api('/api/maintenance'); } catch (e) { cur = { running: false }; }
-  if (cur.running) { toast('Já há uma operação em andamento — acompanhe a barra.', ''); pollMaintenance(labelDone); return; }
-  if (!confirm(confirmMsg)) return;
-  try { await api(`/api/maintenance?type=${type}`, { method: 'POST' }); }
-  catch (e) { toast(e.message, 'err'); return; }
-  toast('Iniciando... acompanhe a barra de progresso.', '');
-  pollMaintenance(labelDone);
-}
-
-function cleanupNoSequela() {
-  startMaint(
-    'no-sequela',
-    'Remover os casos SEM indicação de sequela (lesão/CID)?\n\nO sistema vai ANALISAR e REMOVER em lotes, mostrando o progresso na tela. Pode levar alguns minutos. Esta ação não pode ser desfeita.',
-    'Limpeza por sequela concluída',
-  );
-}
-
-function dedupeByCpf() {
-  startMaint(
-    'dedupe-cpf',
-    'Deduplicar por CPF — manter só o caso de MAIOR potencial (melhor sequela) de cada CPF e remover os repetidos?\n\nO sistema vai ANALISAR e REMOVER em lotes, mostrando o progresso. ⚠️ Rode só depois que a formatação dos CPFs terminar. Esta ação não pode ser desfeita.',
-    'Deduplicação por CPF concluída',
-  );
-}
-
 async function removeImport(file) {
   if (!confirm(`Remover todos os registros do arquivo "${file}"?`)) return;
   try {
     const r = await api(`/api/imports?source_file=${encodeURIComponent(file)}`, { method: 'DELETE' });
     toast(`${fmt(r.removed)} registro(s) removido(s).`, 'ok');
-    await Promise.all([loadStats(), loadRecords(), toggleImports()]);
-    $('#imports-panel').hidden = false;
-    toggleImports();
+    $('#imports-panel').hidden = true;
+    await Promise.all([loadStats(), loadRecords(), loadFilterOptions()]);
   } catch (e) { toast(e.message, 'err'); }
 }
 
-// --- Prospecção (triagem de auxílio-acidente) ---
-function scoreClass(p) {
-  if (p >= 85) return 'pot-muitoalta';
-  if (p >= 70) return 'pot-alta';
-  if (p >= 55) return 'pot-media';
-  if (p >= 40) return 'pot-baixa';
-  return 'pot-muitobaixa';
+// --- Filtros por coluna ---
+function hasFilters() {
+  return FILTER_KEYS.some((k) => state.filters[k]);
 }
 
-async function loadProspects() {
-  const viewer = $('#viewer');
-  viewer.innerHTML = '<div class="spinner">Analisando casos...</div>';
-  const params = new URLSearchParams({ limit: state.limit, offset: state.offset, q: state.q, minScore: state.minScore });
-  if (state.maxScore != null) params.set('maxScore', state.maxScore);
-
-  let data;
-  try { data = await api(`/api/prospects?${params}`); }
-  catch (e) { viewer.innerHTML = `<div class="empty-state"><p>${e.message}</p></div>`; return; }
-
-  const { rows, total, limit, offset } = data;
-
-  // Cabeçalho com seletor de faixa e exportação.
-  const exp = new URLSearchParams({ minScore: state.minScore });
-  if (state.maxScore != null) exp.set('maxScore', state.maxScore);
-  if (state.q) exp.set('q', state.q);
-  const head = el('div', { class: 'prospect-head' }, [
-    el('div', {}, [
-      el('strong', { text: '🎯 Prospecção — auxílio-acidente' }),
-      el('div', { class: 'sub', text: `${fmt(total)} candidato(s)${state.q ? ` para "${state.q}"` : ''} · excluídos: óbitos, aposentados e sem direito (contrib. individual/facultativo)` }),
-      data.pending > 0 ? el('div', { class: 'sub', text: `⏳ Indexando ${fmt(data.pending)} registro(s)... a contagem ainda vai aumentar. Recarregue em instantes.` }) : null,
-    ]),
-    el('div', { class: 'prospect-actions' }, [
-      el('label', { text: 'Faixa: ' }, [
-        (() => {
-          // Faixa exata: cada opção tem mínimo (inclusive) e máximo (exclusivo).
-          const bands = [
-            ['Muito alta (≥85%)', 85, null],
-            ['Alta (70–84%)', 70, 85],
-            ['Média (55–69%)', 55, 70],
-            ['Baixa (40–54%)', 40, 55],
-            ['Muito baixa (<40%)', 0, 40],
-            ['Todas as faixas', 0, null],
-          ];
-          const sel = el('select', { onChange: (ev) => {
-            const b = bands[Number(ev.target.value)];
-            state.minScore = b[1]; state.maxScore = b[2]; state.offset = 0; loadProspects();
-          } });
-          bands.forEach((b, i) => {
-            const o = el('option', { value: String(i), text: b[0] });
-            if (b[1] === state.minScore && (b[2] == null ? null : b[2]) === (state.maxScore == null ? null : state.maxScore)) o.selected = true;
-            sel.appendChild(o);
-          });
-          return sel;
-        })(),
-      ]),
-      el('a', { href: `/api/prospects.csv?${exp}` }, [el('button', { class: 'ghost', text: '⤓ Exportar lista' })]),
-    ]),
-  ]);
-
-  const cols = [
-    ['potencial', '% Êxito'], ['classe', 'Classe'], ['motivos', 'Por quê'], ['telefone', 'Telefone'], ['nome', 'Nome'],
-    ['cid_10', 'CID-10'], ['nat_lesao', 'Nat. Lesão'], ['exigencia', 'Exigência documental'],
-    ['municipio_funcionario', 'Município'], ['estado_funcionario', 'UF'], ['cat', 'CAT'],
-  ];
-  const thead = el('thead', {}, [el('tr', {}, cols.map(([, label]) => el('th', { text: label })))]);
-  const tbody = el('tbody', {}, rows.map((r) => el('tr', {}, cols.map(([key]) => {
-    if (key === 'potencial') {
-      return el('td', {}, [el('span', { class: `pot-badge ${scoreClass(r.potencial)}`, text: r.potencial + '%' })]);
-    }
-    if (key === 'classe') return el('td', {}, [el('span', { class: `classe-tag classe-${(r.classe || '').toLowerCase().replace(/[^a-z]/g, '')}`, text: r.classe || '—' })]);
-    if (key === 'motivos') return el('td', { class: 'motivos', text: (r.motivos || []).join(' · ') });
-    const v = r[key];
-    const td = el('td', {});
-    if (v == null || v === '') td.appendChild(el('span', { class: 'null', text: '—' }));
-    else td.textContent = String(v);
-    return td;
-  }))));
-  const table = el('div', { class: 'table-wrap' }, [el('table', {}, [thead, tbody])]);
-
-  const from = total === 0 ? 0 : offset + 1;
-  const to = Math.min(offset + limit, total);
-  const pager = el('div', { class: 'pager' }, [
-    el('div', { class: 'info', text: `Mostrando ${fmt(from)}–${fmt(to)} de ${fmt(total)} (ordenado por maior potencial)` }),
-    el('div', { class: 'controls' }, [
-      el('button', { class: 'ghost small', text: '◀ Anterior', disabled: offset <= 0 ? '' : null, onClick: () => { state.offset = Math.max(0, offset - limit); loadProspects(); } }),
-      el('button', { class: 'ghost small', text: 'Próxima ▶', disabled: to >= total ? '' : null, onClick: () => { state.offset = offset + limit; loadProspects(); } }),
-    ]),
-  ]);
-
-  viewer.innerHTML = '';
-  viewer.append(head, table, pager);
-}
-
-// --- Painel analítico (BI) ---
-function card(label, value) {
-  return el('div', { class: 'dash-card' }, [el('strong', { text: value }), el('span', { text: label })]);
-}
-function barList(title, items) {
-  const max = items.reduce((m, x) => Math.max(m, x.n), 0) || 1;
-  const rows = items.map((x) => el('div', { class: 'bar-row' }, [
-    el('span', { class: 'bar-label', title: String(x.label), text: String(x.label).slice(0, 40) }),
-    el('span', { class: 'bar-track' }, [el('span', { class: 'bar-fill', style: `width:${Math.max(4, (x.n / max) * 100)}%` })]),
-    el('span', { class: 'bar-val', text: Number(x.n).toLocaleString('pt-BR') }),
-  ]));
-  return el('div', { class: 'dash-section' }, [el('h4', { text: title }), ...rows]);
-}
-
-async function loadDashboard() {
-  const viewer = $('#viewer');
-  viewer.innerHTML = '<div class="spinner">Calculando o painel... (pode levar alguns segundos em bases grandes)</div>';
-  let d;
-  try { d = await api('/api/dashboard'); }
-  catch (e) { viewer.innerHTML = `<div class="empty-state"><p>${e.message}</p></div>`; return; }
-  const t = d.totals;
-  const cards = el('div', { class: 'cards' }, [
-    card('Registros', fmt(t.total)),
-    card('Com sequela', fmt(t.comSequela)),
-    card('Candidatos (≥ 70%)', fmt(t.candidatos)),
-    card('Com telefone', fmt(t.comTelefone)),
-    card('Óbitos', fmt(t.obitos)),
-    card('Inelegíveis', fmt(t.inelegiveis || 0)),
-  ]);
-  const parts = [el('h3', { text: '📊 Painel analítico' }), cards];
-  if (t.pending > 0) parts.push(el('div', { class: 'sub', text: `⏳ Indexando ${fmt(t.pending)} registro(s)... alguns números ainda vão se ajustar.` }));
-  parts.push(el('div', { class: 'dash-grid' }, [
-    barList('Faixa de potencial', d.faixas),
-    barList('Top estados (UF do funcionário)', d.porUF),
-    barList('Top partes do corpo atingidas', d.porParte),
-    barList('Top CID-10', d.porCID),
-    barList('Top naturezas da lesão', d.porLesao),
-  ]));
-  viewer.innerHTML = '';
-  parts.forEach((p) => viewer.appendChild(p));
-}
-
-function refresh() {
-  if (state.mode === 'dashboard') loadDashboard();
-  else if (state.mode === 'prospect') loadProspects();
-  else loadRecords();
-}
-
-function setMode(target) {
-  state.mode = state.mode === target ? 'list' : target;
+function applyFilters() {
+  for (const k of FILTER_KEYS) {
+    const node = $(`[data-filter="${k}"]`);
+    const v = node ? node.value.trim() : '';
+    if (v) state.filters[k] = v; else delete state.filters[k];
+  }
+  $('#filter-clear').hidden = !hasFilters();
   state.offset = 0;
-  const m = state.mode;
-  $('#prospect-btn').textContent = m === 'prospect' ? '← Voltar à lista' : '🎯 Prospecção';
-  $('#prospect-btn').classList.toggle('active', m === 'prospect');
-  $('#dash-btn').textContent = m === 'dashboard' ? '← Voltar à lista' : '📊 Painel';
-  $('#dash-btn').classList.toggle('active', m === 'dashboard');
-  $('#view-btn').hidden = m !== 'list';
-  refresh();
+  loadRecords();
+}
+
+function clearFilters() {
+  state.filters = {};
+  FILTER_KEYS.forEach((k) => { const n = $(`[data-filter="${k}"]`); if (n) n.value = ''; });
+  $('#filter-clear').hidden = true;
+  state.offset = 0;
+  loadRecords();
+}
+
+// Preenche os dropdowns (estado, sexo) com os valores existentes na base.
+async function loadFilterOptions() {
+  for (const col of ['estado_funcionario', 'sexo']) {
+    const sel = $(`[data-filter="${col}"]`);
+    if (!sel || sel.tagName !== 'SELECT') continue;
+    try {
+      const values = await api(`/api/distinct?col=${col}`);
+      const current = state.filters[col] || '';
+      sel.innerHTML = '<option value="">todos</option>';
+      values.forEach((v) => sel.appendChild(el('option', { value: v, text: v })));
+      sel.value = current;
+    } catch (e) { /* silencioso */ }
+  }
 }
 
 // --- Wiring ---
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
 function init() {
   const dz = $('#dropzone');
   const input = $('#file-input');
@@ -417,28 +225,28 @@ function init() {
   ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
   dz.addEventListener('drop', (e) => uploadFiles(e.dataTransfer.files));
 
-  const runSearch = () => { state.q = $('#search').value.trim(); state.offset = 0; $('#search-clear').hidden = !state.q; refresh(); };
+  const runSearch = () => { state.q = $('#search').value.trim(); state.offset = 0; $('#search-clear').hidden = !state.q; loadRecords(); };
   $('#search-btn').addEventListener('click', runSearch);
   $('#search').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
-  $('#search-clear').addEventListener('click', () => { $('#search').value = ''; state.q = ''; $('#search-clear').hidden = true; state.offset = 0; refresh(); });
+  $('#search-clear').addEventListener('click', () => { $('#search').value = ''; state.q = ''; $('#search-clear').hidden = true; state.offset = 0; loadRecords(); });
   $('#imports-btn').addEventListener('click', toggleImports);
-  $('#view-btn').addEventListener('click', () => {
-    state.view = state.view === 'clean' ? 'raw' : 'clean';
-    state.sort = null; state.offset = 0;
-    $('#view-btn').textContent = state.view === 'clean' ? '🧩 Colunas: enxuta' : '🧩 Colunas: todas';
-    loadRecords();
+
+  // Filtros: selects mudam na hora; campos de texto com pequeno atraso.
+  const debApply = debounce(applyFilters, 350);
+  FILTER_KEYS.forEach((k) => {
+    const node = $(`[data-filter="${k}"]`);
+    if (!node) return;
+    if (node.tagName === 'SELECT') node.addEventListener('change', applyFilters);
+    else node.addEventListener('input', debApply);
   });
-  $('#prospect-btn').addEventListener('click', () => setMode('prospect'));
-  $('#dash-btn').addEventListener('click', () => setMode('dashboard'));
+  $('#filter-clear').addEventListener('click', clearFilters);
 
   // Mostra o botão "Sair" apenas quando o acesso é protegido por senha.
   api('/api/auth').then((a) => { if (a.enabled) $('#logout-link').hidden = false; }).catch(() => {});
 
   loadStats();
-  // Atalhos por URL: #prospeccao abre a triagem, #painel abre o BI.
-  if (location.hash === '#prospeccao') $('#prospect-btn').click();
-  else if (location.hash === '#painel') $('#dash-btn').click();
-  else loadRecords();
+  loadFilterOptions();
+  loadRecords();
 }
 
 document.addEventListener('DOMContentLoaded', init);

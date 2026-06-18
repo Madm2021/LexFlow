@@ -9,7 +9,7 @@ const multer = require('multer');
 const { importFilePath } = require('./importer');
 const store = require('./store');
 const auth = require('./auth');
-const { db, DB_PATH } = require('./db');
+const { db, DB_PATH, FILTER_KEYS } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -72,51 +72,32 @@ if (auth.enabled()) {
     return res.redirect('/login');
   });
 } else {
-  // Sem senha: o link "Sair" simplesmente volta para a página inicial.
   app.get('/logout', (req, res) => res.redirect('/'));
 }
 
-// Serve apenas os arquivos do site (não o restante da pasta, p/ não expor o banco).
+// Serve apenas os arquivos do site (não a pasta inteira, p/ não expor o banco).
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/app.js', (req, res) => res.sendFile(path.join(__dirname, 'app.js')));
 app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// Calcula a nota (_potencial/_obito) dos registros pendentes em segundo plano,
-// em pequenos lotes, para não travar o servidor — usado em bases grandes.
-let scoringActive = false;
-let importing = false; // pausa a pontuação enquanto há upload em andamento
-function ensureScoring() {
-  if (scoringActive) return;
-  scoringActive = true;
-  const step = () => {
-    // Enquanto importa, não disputa o banco com a pontuação — só aguarda.
-    if (importing) { setTimeout(step, 500); return; }
-    let changed = 0;
-    try { changed = store.scorePending(2000); } catch (e) { console.error('scorePending:', e.message); }
-    if (changed > 0) { setTimeout(step, 250); return; }
-    // Pontuação concluída: normaliza os CPFs gravados (em 2º plano, sem competir
-    // com a indexação). Cursor por _rowid também cobre futuros imports.
-    let cpf = 0;
-    try { cpf = store.cpfBackfillPending(2000); } catch (e) { console.error('cpfBackfill:', e.message); }
-    if (cpf > 0) setTimeout(step, 250);
-    else scoringActive = false;
-  };
-  // Lotes menores (2000) + pausa maior (250ms) entre eles: a indexação demora
-  // um pouco mais, mas deixa o servidor respirar para atender a tela e uploads
-  // (evita "Request aborted" por servidor ocupado em bases muito grandes).
-  setTimeout(step, 100);
+// Lê os filtros por coluna da query string (apenas as colunas permitidas).
+function readFilters(req) {
+  const filters = {};
+  for (const k of FILTER_KEYS) {
+    if (req.query[k] != null && String(req.query[k]).trim() !== '') filters[k] = String(req.query[k]).trim();
+  }
+  return filters;
 }
 
-// --- Upload e importação (alimenta a lista única, ignorando duplicatas) ---
+// --- Upload e importação (alimenta a base única, ignorando duplicatas) ---
 app.post('/api/upload', upload.array('files'), wrap(async (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
   }
   const imported = [];
   const errors = [];
-  importing = true; // pausa a pontuação em 2º plano durante a importação
   try {
     for (const file of req.files) {
       try {
@@ -128,11 +109,9 @@ app.post('/api/upload', upload.array('files'), wrap(async (req, res) => {
       }
     }
   } finally {
-    importing = false;
     // Consolida o WAL no banco e libera espaço após o lote de importação.
     try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { console.error('checkpoint:', e.message); }
   }
-  ensureScoring(); // calcula a nota dos novos registros em segundo plano
   res.json({ imported, errors });
 }));
 
@@ -145,56 +124,31 @@ app.get('/api/stats', (req, res) => res.json(store.getStats()));
 // --- Catálogo de colunas ---
 app.get('/api/columns', (req, res) => res.json(store.getColumns()));
 
-// --- Lista única de registros (paginação/busca/ordenação) ---
-// view=clean (padrão): mostra as colunas-destino do de-para.
-// view=raw: mostra todas as colunas originais.
+// --- Valores distintos de uma coluna (para os dropdowns de filtro) ---
+app.get('/api/distinct', (req, res) => res.json(store.distinctValues(req.query.col || '')));
+
+// --- Lista de registros (paginação / busca full-text / filtros / ordenação) ---
 app.get('/api/records', (req, res) => {
-  const opts = {
+  res.json(store.query({
     limit: req.query.limit,
     offset: req.query.offset,
     q: req.query.q || '',
+    filters: readFilters(req),
     sort: req.query.sort || null,
     dir: req.query.dir || 'asc',
-  };
-  const fn = req.query.view === 'raw' ? store.queryRecords : store.queryRecordsClean;
-  res.json(fn(opts));
+  }));
 });
-
-// --- Painel analítico (BI) ---
-app.get('/api/dashboard', (req, res) => res.json(store.dashboard()));
 
 // --- Histórico de importações ---
 app.get('/api/imports', (req, res) => res.json(store.listImports()));
 
-// --- Prospecção (triagem de auxílio-acidente) ---
-app.get('/api/prospects', (req, res) => {
-  res.json(store.queryProspects({
-    limit: req.query.limit,
-    offset: req.query.offset,
-    q: req.query.q || '',
-    minScore: req.query.minScore != null ? req.query.minScore : 70,
-    maxScore: req.query.maxScore != null ? req.query.maxScore : null,
-  }));
-});
-
-app.get('/api/prospects.csv', (req, res) => {
-  const csv = store.exportProspectsCsv({
-    q: (req.query.q || '').trim(),
-    minScore: req.query.minScore != null ? req.query.minScore : 70,
-    maxScore: req.query.maxScore != null ? req.query.maxScore : null,
-  });
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="lexflow_prospeccao.csv"');
-  res.send('﻿' + csv);
-});
-
-// --- Exportar a lista (ou o resultado de uma busca) em CSV ---
+// --- Exportar a lista (respeitando busca e filtros) em CSV, via streaming ---
 app.get('/api/export.csv', (req, res) => {
-  const q = (req.query.q || '').trim();
-  const csv = req.query.view === 'raw' ? store.exportCsv(q) : store.exportCsvClean(q);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lexflow_dados.csv"');
-  res.send('﻿' + csv); // BOM para o Excel reconhecer UTF-8
+  res.write('﻿'); // BOM para o Excel reconhecer UTF-8
+  store.streamCsv({ q: (req.query.q || '').trim(), filters: readFilters(req) }, (chunk) => res.write(chunk));
+  res.end();
 });
 
 // --- Remover os dados de um arquivo específico ---
@@ -204,38 +158,6 @@ app.delete('/api/imports', (req, res) => {
   const removed = store.deleteBySource(file);
   res.json({ ok: true, removed });
 });
-
-// --- Casos sem indicação de sequela (contar / excluir) ---
-app.get('/api/no-sequela', (req, res) => res.json({ count: store.countNoSequela() }));
-app.delete('/api/no-sequela', (req, res) => res.json({ removed: store.deleteNoSequela() }));
-
-// --- Deduplicação por CPF (contar / executar) ---
-// Mantém só o melhor caso (maior potencial) de cada CPF e remove os repetidos.
-app.get('/api/dedupe-cpf', (req, res) => res.json({ count: store.countCpfDuplicates() }));
-app.delete('/api/dedupe-cpf', (req, res) => res.json({ removed: store.dedupeByCpf() }));
-
-// --- Manutenção COM PROGRESSO (limpeza por sequela / dedup por CPF) ---
-// Roda em lotes em 2º plano; o front consulta GET /api/maintenance para a barra.
-function driveMaintenance() {
-  const j = store.getMaintJob();
-  if (!j.running) return;
-  if (j.phase === 'analisando') {
-    try { store.maintAnalyze(); } catch (e) { console.error('maintAnalyze:', e.message); }
-    setTimeout(driveMaintenance, 50);
-    return;
-  }
-  try { store.maintDeleteStep(5000); } catch (e) { console.error('maintDeleteStep:', e.message); }
-  if (store.getMaintJob().running) setTimeout(driveMaintenance, 120);
-}
-app.post('/api/maintenance', (req, res) => {
-  const type = req.query.type;
-  if (!['no-sequela', 'dedupe-cpf'].includes(type)) return res.status(400).json({ error: 'Tipo inválido.' });
-  if (store.getMaintJob().running) return res.status(409).json({ error: 'Já há uma operação em andamento.' });
-  store.startMaintenance(type);
-  setTimeout(driveMaintenance, 50);
-  res.json({ ok: true });
-});
-app.get('/api/maintenance', (req, res) => res.json(store.getMaintJob()));
 
 // --- Apagar tudo ---
 app.delete('/api/records', (req, res) => {
@@ -255,14 +177,10 @@ if (require.main === module) {
   const server = app.listen(PORT, () => {
     console.log(`LexFlow rodando em http://localhost:${PORT}`);
     console.log(`Banco de dados: ${DB_PATH}`);
-    try { store.ensureScoringVersion(); } catch (e) { console.error('ensureScoringVersion:', e.message); }
-    ensureScoring(); // recalcula notas pendentes (jurimetria) em segundo plano
   });
-  // Uploads grandes e lentos (arquivos de centenas de MB, do Brasil até US West)
-  // podem passar do limite padrão de 5 min do Node e serem abortados ("Request
-  // aborted"). Damos margem larga para a requisição inteira concluir.
-  server.requestTimeout = 60 * 60 * 1000;   // 60 min para a requisição completa
-  server.headersTimeout = 10 * 60 * 1000;   // 10 min só para os cabeçalhos
+  // Uploads grandes e lentos podem passar do limite padrão de 5 min do Node.
+  server.requestTimeout = 60 * 60 * 1000;
+  server.headersTimeout = 10 * 60 * 1000;
   server.keepAliveTimeout = 10 * 60 * 1000;
 }
 

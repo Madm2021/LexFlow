@@ -70,6 +70,17 @@ function csvEscape(v) {
   return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+// Preserva o ZERO À ESQUERDA e evita notação científica no Excel. Valores que
+// são só dígitos e (a) começam com zero (CPF sem máscara, CEP, CTPS, telefone)
+// ou (b) são bem longos (Excel mostraria 1.23E+11), saem como texto forçado
+// (=\"...\"), então o Excel mantém exatamente como está, sem cortar o zero.
+function excelCell(v) {
+  if (v == null) return '';
+  const s = String(v);
+  if (/^\d+$/.test(s) && (s[0] === '0' || s.length >= 12)) return `="${s}"`;
+  return s;
+}
+
 // --- Busca paginada (rápida: usa FTS/índices) ---
 function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = false, sort = null, dir = 'asc' } = {}, total) {
   const columns = COLUMNS.map((c) => ({ column_name: c.key, original_name: c.label }));
@@ -153,11 +164,12 @@ function computeDistinct(db, col) {
 
 function streamCsv(db, { q = '', filters = {}, validCpf = false } = {}, write) {
   const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
-  write(['Origem', ...COLUMNS.map((c) => c.label)].map(csvEscape).join(CSV_SEP) + '\r\n');
-  const selectCols = ['r._source_file', ...COLUMN_KEYS.map((k) => `r."${k}"`)].join(', ');
+  // Sem a coluna "Origem": exporta de CAT em diante, na ordem do schema.
+  write(COLUMNS.map((c) => csvEscape(c.label)).join(CSV_SEP) + '\r\n');
+  const selectCols = COLUMN_KEYS.map((k) => `r."${k}"`).join(', ');
   const stmt = db.prepare(`SELECT ${selectCols} ${from} ${whereSql} ORDER BY r._rowid ASC`);
   for (const row of stmt.iterate(...params)) {
-    write([row._source_file, ...COLUMN_KEYS.map((k) => row[k])].map(csvEscape).join(CSV_SEP) + '\r\n');
+    write(COLUMN_KEYS.map((k) => csvEscape(excelCell(row[k]))).join(CSV_SEP) + '\r\n');
   }
 }
 

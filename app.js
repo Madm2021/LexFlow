@@ -2,7 +2,7 @@
 
 const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario', 'cid_10'];
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {} };
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, distOpen: false };
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
@@ -92,7 +92,8 @@ async function loadRecords() {
   }
 
   const ctx = state.q ? ` para “${state.q}”` : '';
-  meta.innerHTML = `<strong>${fmt(total)}</strong> registro(s)${ctx}${hasFilters() ? ' (filtrado)' : ''}`;
+  meta.innerHTML = `<span class="big-total">${fmt(total)}</span> <span class="meta-sub">registro(s)${ctx}${hasFilters() ? ' (filtrado)' : ''}</span>`;
+  if (state.distOpen) loadFacets();
 
   const headerCells = [{ column_name: '_source_file', original_name: 'Origem' }, ...columns];
   const thead = el('thead', {}, [el('tr', {}, headerCells.map((c) => {
@@ -226,6 +227,51 @@ async function removeImport(file) {
   } catch (e) { toast(e.message, 'err'); }
 }
 
+// ===== Distribuição (quantidades por valor) =====
+function distBars(title, items) {
+  const max = items.reduce((m, x) => Math.max(m, x.n), 0) || 1;
+  const rows = items.map((x) => el('div', { class: 'bar-row' }, [
+    el('span', { class: 'bar-label', title: String(x.value || '—'), text: String(x.value || '—') }),
+    el('span', { class: 'bar-track' }, [el('span', { class: 'bar-fill', style: `width:${Math.max(3, (x.n / max) * 100)}%` })]),
+    el('span', { class: 'bar-val', text: fmt(x.n) }),
+  ]));
+  return el('div', { class: 'dist-col' }, [el('h4', { text: title }), ...rows]);
+}
+function annotateEstado(byEstado) {
+  const sel = $('[data-filter="estado_funcionario"]');
+  if (!sel) return;
+  const map = {};
+  (byEstado || []).forEach((x) => { if (x.value) map[String(x.value).toUpperCase()] = x.n; });
+  Array.from(sel.options).forEach((o) => { if (o.value) o.textContent = `${o.value} (${fmt(map[o.value.toUpperCase()] || 0)})`; });
+}
+async function loadFacets() {
+  if (!state.distOpen) return;
+  const panel = $('#dist-panel');
+  panel.innerHTML = '<div class="spinner">Calculando as quantidades... (pode levar alguns segundos em bases grandes)</div>';
+  let d;
+  try { d = await api(`/api/facets?${queryParams()}`); }
+  catch (e) { panel.innerHTML = `<div class="spinner">${e.message}</div>`; return; }
+  panel.innerHTML = '';
+  panel.append(
+    el('div', { class: 'dist-head' }, [
+      el('div', {}, [el('strong', { text: '📊 Distribuição' }), el('span', { class: 'meta-sub', text: ` · ${fmt(d.total)} registro(s) no recorte atual` })]),
+      el('a', { href: `/api/facets.csv?${queryParams()}`, class: 'btn ghost small' }, ['⤒ Exportar contagem']),
+    ]),
+    el('div', { class: 'dist-grid' }, [
+      distBars('Por Estado', d.byEstado),
+      distBars('Top Municípios', d.byMunicipio),
+      distBars('Top CID-10', d.byCid),
+    ]),
+  );
+  annotateEstado(d.byEstado);
+}
+function toggleDist() {
+  state.distOpen = !state.distOpen;
+  $('#dist-panel').hidden = !state.distOpen;
+  $('#dist-btn').classList.toggle('active', state.distOpen);
+  if (state.distOpen) loadFacets();
+}
+
 // ===== Wiring =====
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
@@ -252,6 +298,7 @@ function init() {
   $('#filter-clear').addEventListener('click', clearFilters);
 
   // Importação
+  $('#dist-btn').addEventListener('click', toggleDist);
   $('#import-btn').addEventListener('click', openImport);
   document.querySelectorAll('[data-close-modal]').forEach((n) => n.addEventListener('click', closeImport));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeImport(); });

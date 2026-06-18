@@ -23,6 +23,7 @@
         <span><strong id="stat-imports">0</strong> planilhas</span>
       </div>
       <button id="theme-toggle" class="icon-btn" title="Alternar tema claro/escuro" aria-label="Alternar tema">🌙</button>
+      <button id="dist-btn" class="btn ghost">📊 Distribuição</button>
       <button id="import-btn" class="btn ghost">⤓ Importar</button>
       <a id="export-link" href="/api/export.csv" class="btn ghost">⤒ Exportar</a>
       <a id="logout-link" href="/logout" class="btn ghost danger-text" hidden>Sair</a>
@@ -56,6 +57,9 @@
       </div>
       <button id="filter-clear" class="btn ghost small" hidden>Limpar filtros</button>
     </section>
+
+    <!-- Painel de distribuição (quantidades por valor) -->
+    <section id="dist-panel" class="dist-panel" hidden></section>
 
     <!-- Resultados -->
     <section class="results">

@@ -139,6 +139,16 @@ app.get('/api/records', (req, res) => {
   }));
 });
 
+// --- Distribuição / facetas (quantidades por Estado, Município, CID) ---
+app.get('/api/facets', (req, res) => {
+  res.json(store.facets({ q: (req.query.q || '').trim(), filters: readFilters(req) }));
+});
+app.get('/api/facets.csv', (req, res) => {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="lexflow_distribuicao.csv"');
+  res.send('﻿' + store.facetsCsv({ q: (req.query.q || '').trim(), filters: readFilters(req) }));
+});
+
 // --- Histórico de importações ---
 app.get('/api/imports', (req, res) => res.json(store.listImports()));
 

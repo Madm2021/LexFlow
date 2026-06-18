@@ -231,12 +231,54 @@ function streamCsv({ q = '', filters = {} } = {}, write) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// FACETAS / DISTRIBUIÇÃO: quantidades por valor (Estado, Município, CID),
+// respeitando a busca/filtros atuais. Pesado em bases grandes, então o caso
+// "sem filtro" fica em cache (só recalcula quando os dados mudam).
+// ---------------------------------------------------------------------------
+function topBy(col, limit, from, whereSql, params) {
+  const base = whereSql ? `${whereSql} AND ` : 'WHERE ';
+  return db.prepare(
+    `SELECT r."${col}" AS value, COUNT(*) AS n ${from} ${base}
+       r."${col}" IS NOT NULL AND TRIM(r."${col}") <> ''
+     GROUP BY r."${col}" COLLATE NOCASE ORDER BY n DESC LIMIT ?`,
+  ).all(...params, limit);
+}
+
+function facets({ q = '', filters = {} } = {}) {
+  const { from, whereSql, params, filtered } = buildQuery({ q, filters });
+  const compute = () => ({
+    total: filtered
+      ? db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n
+      : cached('total', () => db.prepare('SELECT COUNT(*) AS n FROM records').get().n),
+    byEstado: topBy('estado_funcionario', 40, from, whereSql, params),
+    byMunicipio: topBy('municipio_funcionario', 12, from, whereSql, params),
+    byCid: topBy('cid_10', 12, from, whereSql, params),
+  });
+  return filtered ? compute() : cached('facets', compute);
+}
+
+// Exporta a distribuição (contagens por Estado/Município/CID) em CSV.
+function facetsCsv({ q = '', filters = {} } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters });
+  const lines = ['Dimensão,Valor,Quantidade'];
+  const dims = [['Estado', 'estado_funcionario', 100], ['Município', 'municipio_funcionario', 1000], ['CID-10', 'cid_10', 1000]];
+  for (const [label, col, lim] of dims) {
+    for (const r of topBy(col, lim, from, whereSql, params)) {
+      lines.push([label, csvEscape(r.value), r.n].join(','));
+    }
+  }
+  return lines.join('\r\n');
+}
+
 module.exports = {
   COLUMN_KEYS,
   FILTER_KEYS,
   FTS_FILTER_KEYS,
   ALL_FILTER_KEYS,
   DISTINCT_KEYS,
+  facets,
+  facetsCsv,
   formatCPF,
   buildSearchText,
   insertRow,

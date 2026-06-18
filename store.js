@@ -31,7 +31,10 @@ function bumpData() {
   dataVersion += 1;
   for (const k of Object.keys(memo)) delete memo[k];
   facetsAllInflight = null;
-  try { db.prepare('DELETE FROM app_cache').run(); } catch (e) { /* ignora */ }
+  // Limpa o cache de contagens, mas preserva os SINALIZADORES (flag:*), como o
+  // "keys_built" (chave de identidade já preenchida na base) — que não deve ser
+  // perdido a cada importação/remoção.
+  try { db.prepare("DELETE FROM app_cache WHERE key NOT LIKE 'flag:%'").run(); } catch (e) { /* ignora */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +295,14 @@ function startHygiene() {
 function hygieneStep(chunk = 4000) {
   if (!hygiene.running) return 0;
   const rows = hygieneSel.all(hygiene.cursor, chunk);
-  if (rows.length === 0) { hygiene.running = false; bumpData(); return 0; }
+  if (rows.length === 0) {
+    hygiene.running = false;
+    // Marca que a chave de identidade já foi preenchida em toda a base. É isso
+    // que libera (e torna confiável) a etapa de "reunir duplicados".
+    setPersist('flag:keys_built', true);
+    bumpData();
+    return 0;
+  }
   const tx = db.transaction(() => {
     for (const r of rows) {
       const c = normalizeCpf(r.cpf);
@@ -358,10 +368,19 @@ function collapseKey(key) {
 function getDedupJob() {
   const base = { running: dedup.running, removed: dedup.removed, groups: dedup.groups };
   if (dedup.running) return base;
+  // keysReady = a higienização já preencheu a chave de identidade em toda a
+  // base. Sem isso, a contagem de duplicados é enganosa (só "enxerga" os
+  // registros recém-importados, não os 11M antigos) — então a UI deve pedir
+  // para rodar a higienização antes.
+  const keysReady = getPersist('flag:keys_built') === true;
   const r = db.prepare(
     'SELECT COUNT(*) AS rows, COUNT(DISTINCT _key) AS keys FROM records WHERE _key IS NOT NULL',
   ).get();
-  return { ...base, duplicates: Math.max(0, r.rows - r.keys), hygienePending: hygieneStats().pendente };
+  return {
+    ...base, keysReady,
+    duplicates: Math.max(0, r.rows - r.keys),
+    hygienePending: hygieneStats().pendente,
+  };
 }
 
 function startDedup() {

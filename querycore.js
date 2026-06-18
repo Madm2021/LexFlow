@@ -60,10 +60,14 @@ function buildQuery({ q = '', filters = {}, validCpf = false } = {}) {
   return { from, whereSql, params, filtered };
 }
 
+// Separador ";" (ponto-e-vírgula): o Excel em português (pt-BR) usa ";" como
+// separador de listas, então o arquivo abre com as colunas já separadas. Bônus:
+// valores com vírgula decimal (ex.: "1.252,00") ficam intactos numa só célula.
+const CSV_SEP = ';';
 function csvEscape(v) {
   if (v == null) return '';
   const s = String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 // --- Busca paginada (rápida: usa FTS/índices) ---
@@ -124,8 +128,8 @@ function computeFacets(db, { q = '', filters = {}, validCpf = false } = {}) {
 
 function computeFacetsCsv(db, { q = '', filters = {}, validCpf = false } = {}) {
   const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
-  const lines = ['Dimensão,Valor,Quantidade'];
-  const push = (label, rows) => rows.forEach((r) => lines.push([label, csvEscape(r.value), r.n].join(',')));
+  const lines = [['Dimensão', 'Valor', 'Quantidade'].join(CSV_SEP)];
+  const push = (label, rows) => rows.forEach((r) => lines.push([label, csvEscape(r.value), r.n].join(CSV_SEP)));
   push('Estado', estadoCounts(db, from, whereSql, params, 100));
   push('Município', topBy(db, 'municipio_funcionario', 1000, from, whereSql, params));
   push('CID-10', topBy(db, 'cid_10', 1000, from, whereSql, params));
@@ -149,11 +153,11 @@ function computeDistinct(db, col) {
 
 function streamCsv(db, { q = '', filters = {}, validCpf = false } = {}, write) {
   const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
-  write(['Origem', ...COLUMNS.map((c) => c.label)].map(csvEscape).join(',') + '\r\n');
+  write(['Origem', ...COLUMNS.map((c) => c.label)].map(csvEscape).join(CSV_SEP) + '\r\n');
   const selectCols = ['r._source_file', ...COLUMN_KEYS.map((k) => `r."${k}"`)].join(', ');
   const stmt = db.prepare(`SELECT ${selectCols} ${from} ${whereSql} ORDER BY r._rowid ASC`);
   for (const row of stmt.iterate(...params)) {
-    write([row._source_file, ...COLUMN_KEYS.map((k) => row[k])].map(csvEscape).join(',') + '\r\n');
+    write([row._source_file, ...COLUMN_KEYS.map((k) => row[k])].map(csvEscape).join(CSV_SEP) + '\r\n');
   }
 }
 

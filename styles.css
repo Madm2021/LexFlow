@@ -238,3 +238,20 @@ td.origin { color: var(--muted); font-size: 12.5px; }
   .search-hero .btn.primary { padding: 12px; }
   .filter-field { flex-basis: 100%; }
 }
+
+/* ===== Higienização ===== */
+.check-field { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--text); cursor: pointer; align-self: flex-end; padding-bottom: 9px; white-space: nowrap; }
+.check-field input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+
+.hygiene-box { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.hygiene-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.hygiene-stats { margin-top: 10px; font-size: 13px; }
+.hg-ok { color: var(--ok); font-weight: 600; }
+.hg-bad { color: var(--danger); }
+.hg-pend { color: var(--muted); }
+
+.maint-progress { margin-top: 12px; }
+.maint-prog-label { font-size: 12.5px; color: var(--muted); margin-bottom: 5px; }
+.maint-prog-track { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; height: 12px; overflow: hidden; }
+.maint-prog-fill { height: 100%; background: var(--accent); transition: width .3s; }
+.maint-prog-pct { font-size: 12px; color: var(--muted); text-align: right; margin-top: 4px; font-variant-numeric: tabular-nums; }

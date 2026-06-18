@@ -20,11 +20,12 @@ function ftsQuery(q) {
   return terms.trim() || null;
 }
 
-// Monta FROM/WHERE/params a partir de q + filtros.
-function buildQuery({ q = '', filters = {} } = {}) {
+// Monta FROM/WHERE/params a partir de q + filtros (+ apenas CPF válido).
+function buildQuery({ q = '', filters = {}, validCpf = false } = {}) {
   const where = [];
   const params = [];
   let from = 'FROM records r';
+  if (validCpf) where.push('r._cpf_ok = 1');
 
   const ftsTerms = [];
   if (q) { const fq = ftsQuery(q); if (fq) ftsTerms.push(fq); }
@@ -66,9 +67,9 @@ function csvEscape(v) {
 }
 
 // --- Busca paginada (rápida: usa FTS/índices) ---
-function query(db, { limit = 50, offset = 0, q = '', filters = {}, sort = null, dir = 'asc' } = {}, total) {
+function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = false, sort = null, dir = 'asc' } = {}, total) {
   const columns = COLUMNS.map((c) => ({ column_name: c.key, original_name: c.label }));
-  const { from, whereSql, params } = buildQuery({ q, filters });
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
 
   let orderBy = 'ORDER BY r._rowid ASC';
   if (sort && COLUMN_KEYS.includes(sort)) {
@@ -88,8 +89,8 @@ function query(db, { limit = 50, offset = 0, q = '', filters = {}, sort = null, 
   return { columns, rows, total, limit: safeLimit, offset: safeOffset };
 }
 
-function count(db, { q = '', filters = {} } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters });
+function count(db, { q = '', filters = {}, validCpf = false } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
   return db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n;
 }
 
@@ -111,8 +112,8 @@ function estadoCounts(db, from, whereSql, params, limit) {
   return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([value, n]) => ({ value, n }));
 }
 
-function computeFacets(db, { q = '', filters = {} } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters });
+function computeFacets(db, { q = '', filters = {}, validCpf = false } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
   return {
     total: db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n,
     byEstado: estadoCounts(db, from, whereSql, params, 40),
@@ -121,8 +122,8 @@ function computeFacets(db, { q = '', filters = {} } = {}) {
   };
 }
 
-function computeFacetsCsv(db, { q = '', filters = {} } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters });
+function computeFacetsCsv(db, { q = '', filters = {}, validCpf = false } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
   const lines = ['Dimensão,Valor,Quantidade'];
   const push = (label, rows) => rows.forEach((r) => lines.push([label, csvEscape(r.value), r.n].join(',')));
   push('Estado', estadoCounts(db, from, whereSql, params, 100));
@@ -146,8 +147,8 @@ function computeDistinct(db, col) {
   return raw.map((r) => r.v);
 }
 
-function streamCsv(db, { q = '', filters = {} } = {}, write) {
-  const { from, whereSql, params } = buildQuery({ q, filters });
+function streamCsv(db, { q = '', filters = {}, validCpf = false } = {}, write) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
   write(['Origem', ...COLUMNS.map((c) => c.label)].map(csvEscape).join(',') + '\r\n');
   const selectCols = ['r._source_file', ...COLUMN_KEYS.map((k) => `r."${k}"`)].join(', ');
   const stmt = db.prepare(`SELECT ${selectCols} ${from} ${whereSql} ORDER BY r._rowid ASC`);

@@ -159,6 +159,22 @@ app.post('/api/hygiene', (req, res) => {
 });
 app.get('/api/hygiene', (req, res) => res.json(store.getHygieneJob()));
 
+// --- Reunir duplicados antigos (Fase 2), em lotes, sem travar ---
+function driveDedup() {
+  if (!store.getDedupJob().running) return;
+  let n = 0;
+  try { n = store.dedupStep(2000); } catch (e) { console.error('dedup:', e.message); }
+  if (store.getDedupJob().running) setTimeout(driveDedup, n > 0 ? 120 : 1000);
+  else { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ } }
+}
+app.post('/api/dedup', (req, res) => {
+  if (store.getDedupJob().running) return res.status(409).json({ error: 'Já em andamento.' });
+  store.startDedup();
+  setTimeout(driveDedup, 50);
+  res.json({ ok: true });
+});
+app.get('/api/dedup', (req, res) => res.json(store.getDedupJob()));
+
 // --- Distribuição / facetas (quantidades por Estado, Município, CID) ---
 // Roda na thread de trabalho (worker), então não trava o servidor.
 app.get('/api/facets', wrap(async (req, res) => {

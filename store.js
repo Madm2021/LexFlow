@@ -312,6 +312,78 @@ function hygieneStep(chunk = 4000) {
 }
 
 // ---------------------------------------------------------------------------
+// DEDUP (Fase 2): reúne os duplicados ANTIGOS por chave de identidade (_key).
+// Para cada grupo com a mesma chave, funde tudo no registro de menor _rowid
+// (preenche vazios, acumula contatos, mantém identidade — mesmas regras do
+// import) e remove as cópias. Roda em lotes, sem travar, e é resumível por
+// cursor sobre o valor de _key. NÃO mexe em registros sem chave (_key NULL).
+// Pré-requisito: rodar a higienização antes (ela é quem preenche _key).
+// ---------------------------------------------------------------------------
+let dedup = { running: false, cursor: '', removed: 0, groups: 0 };
+const dedupKeysSel = db.prepare(
+  `SELECT _key, COUNT(*) AS c FROM records
+   WHERE _key IS NOT NULL AND _key > ?
+   GROUP BY _key ORDER BY _key LIMIT ?`,
+);
+const dedupGroupSel = db.prepare(
+  `SELECT _rowid, _source_file, ${COLUMN_KEYS.map((k) => `"${k}"`).join(', ')}
+   FROM records WHERE _key = ? ORDER BY _rowid`,
+);
+const dedupDelStmt = db.prepare('DELETE FROM records WHERE _rowid = ?');
+
+// Funde um grupo (mesma chave) no registro de menor _rowid e apaga os demais.
+function collapseKey(key) {
+  const rows = dedupGroupSel.all(key);
+  if (rows.length < 2) return;
+  const canon = rows[0];
+  const acc = {};
+  for (const k of COLUMN_KEYS) acc[k] = canon[k];
+  for (let i = 1; i < rows.length; i += 1) {
+    for (const k of COLUMN_KEYS) acc[k] = mergeField(k, acc[k], rows[i][k]);
+  }
+  const cpf = normalizeCpf(acc.cpf);
+  acc.cpf = cpf.value;
+  const search = buildSearchText(acc, canon._source_file);
+  updateMergeStmt.run(
+    ...COLUMN_KEYS.map((k) => (acc[k] == null || acc[k] === '' ? null : acc[k])),
+    cpf.ok, search, canon._rowid,
+  );
+  for (let i = 1; i < rows.length; i += 1) dedupDelStmt.run(rows[i]._rowid);
+  dedup.removed += rows.length - 1;
+  dedup.groups += 1;
+}
+
+// Estado/prévia. Enquanto roda, devolve só os contadores (barato). Parado,
+// calcula quantos seriam removidos (linhas com chave − chaves distintas).
+function getDedupJob() {
+  const base = { running: dedup.running, removed: dedup.removed, groups: dedup.groups };
+  if (dedup.running) return base;
+  const r = db.prepare(
+    'SELECT COUNT(*) AS rows, COUNT(DISTINCT _key) AS keys FROM records WHERE _key IS NOT NULL',
+  ).get();
+  return { ...base, duplicates: Math.max(0, r.rows - r.keys), hygienePending: hygieneStats().pendente };
+}
+
+function startDedup() {
+  if (dedup.running) return { running: true, removed: dedup.removed, groups: dedup.groups };
+  dedup = { running: true, cursor: '', removed: 0, groups: 0 };
+  return { running: true, removed: 0, groups: 0 };
+}
+
+// Processa um lote de chaves; retorna quantas chaves varreu (0 = terminou).
+function dedupStep(chunkKeys = 2000) {
+  if (!dedup.running) return 0;
+  const keys = dedupKeysSel.all(dedup.cursor, chunkKeys);
+  if (keys.length === 0) { dedup.running = false; bumpData(); return 0; }
+  const tx = db.transaction(() => {
+    for (const row of keys) { if (row.c > 1) collapseKey(row._key); }
+  });
+  tx();
+  dedup.cursor = keys[keys.length - 1]._key;
+  return keys.length;
+}
+
+// ---------------------------------------------------------------------------
 // Histórico e remoção.
 // ---------------------------------------------------------------------------
 function listImports() {
@@ -352,6 +424,9 @@ module.exports = {
   startHygiene,
   hygieneStep,
   hygieneStats,
+  getDedupJob,
+  startDedup,
+  dedupStep,
   listImports,
   deleteBySource,
   clearAll,

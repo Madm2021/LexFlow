@@ -158,10 +158,13 @@ data/            Banco SQLite (não versionado) — em produção, /data na Rail
 - O formato **`.xls` (Excel antigo, binário)** não é suportado — salve como `.xlsx`.
 - Apenas as **colunas pré-definidas** (`mapping.js`) são guardadas.
 - A deduplicação por identidade usa **CAT** ou **CPF válido**; sem nenhum dos
-  dois, só junta linhas **idênticas** (mesmos valores nas colunas). Os
-  duplicados **antigos** (anteriores a esta regra) só são reunidos quando a
-  mesma chave reaparece num import; a limpeza em massa dos antigos é uma etapa
-  separada (ainda não habilitada).
+  dois, só junta linhas **idênticas** (mesmos valores nas colunas).
+- A limpeza dos duplicados **antigos** é feita pelo botão **🧹 Reunir
+  duplicados** (`POST /api/dedup`): reúne as cópias da mesma chave num único
+  registro (fundindo os dados) e **remove** as repetições, em segundo plano.
+  Mostra uma prévia ("quantos seriam removidos") antes de confirmar e exige a
+  higienização feita (é ela quem preenche a chave). **Apaga linhas** — faça um
+  backup (`⤓ Exportar`) antes, se quiser.
 - O verificador de CPF confere o **dígito verificador** (se o número é
   matematicamente válido), **não** se ele pertence àquela pessoa — para isso só
   com a API paga da Receita Federal.

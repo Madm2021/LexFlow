@@ -154,7 +154,15 @@ db.exec(`
   CREATE TRIGGER IF NOT EXISTS records_ad AFTER DELETE ON records BEGIN
     INSERT INTO records_fts(records_fts, rowid, _search) VALUES('delete', old._rowid, old._search);
   END;
-  CREATE TRIGGER IF NOT EXISTS records_au AFTER UPDATE ON records BEGIN
+`);
+
+// Gatilho de UPDATE: só reindexa o full-text quando o texto de busca REALMENTE
+// muda (evita reindexar 11M linhas à toa durante a higienização). DROP+CREATE
+// para substituir a versão antiga que reindexava em qualquer update.
+db.exec(`
+  DROP TRIGGER IF EXISTS records_au;
+  CREATE TRIGGER records_au AFTER UPDATE ON records
+  WHEN new._search IS NOT old._search BEGIN
     INSERT INTO records_fts(records_fts, rowid, _search) VALUES('delete', old._rowid, old._search);
     INSERT INTO records_fts(rowid, _search) VALUES (new._rowid, new._search);
   END;

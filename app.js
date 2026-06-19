@@ -474,14 +474,34 @@ async function removeImport(file) {
 }
 
 // ===== Distribuição (quantidades por valor) =====
-function distBars(title, items) {
+// Clicar numa barra aplica o filtro daquela dimensão (drill-down).
+function applyFacetFilter(key, value) {
+  if (value == null || value === '') return;
+  const node = $(`[data-filter="${key}"]`);
+  if (node) node.value = String(value);
+  applyFilters();
+}
+function distBars(title, icon, items, total, filterKey) {
   const max = items.reduce((m, x) => Math.max(m, x.n), 0) || 1;
-  const rows = items.map((x) => el('div', { class: 'bar-row' }, [
-    el('span', { class: 'bar-label', title: String(x.value || '—'), text: String(x.value || '—') }),
-    el('span', { class: 'bar-track' }, [el('span', { class: 'bar-fill', style: `width:${Math.max(3, (x.n / max) * 100)}%` })]),
-    el('span', { class: 'bar-val', text: fmt(x.n) }),
-  ]));
-  return el('div', { class: 'dist-col' }, [el('h4', { text: title }), ...rows]);
+  const rows = items.map((x) => {
+    const pct = total ? Math.round((x.n / total) * 100) : 0;
+    const w = Math.max(2, (x.n / max) * 100);
+    const props = { class: `dbar${filterKey ? ' clickable' : ''}` };
+    if (filterKey) { props.onClick = () => applyFacetFilter(filterKey, x.value); props.title = `Filtrar por “${x.value || '—'}”`; }
+    return el('div', props, [
+      el('div', { class: 'dbar-top' }, [
+        el('span', { class: 'dbar-label', text: String(x.value || '—') }),
+        el('span', { class: 'dbar-val' }, [fmt(x.n), el('em', { text: ` ${pct}%` })]),
+      ]),
+      el('div', { class: 'dbar-track' }, [el('span', { class: 'dbar-fill', style: 'width:0', 'data-w': String(w) })]),
+    ]);
+  });
+  return el('div', { class: 'dist-col' }, [el('h4', {}, [icon ? el('span', { class: 'dist-ico', text: icon }) : null, title]), ...rows]);
+}
+function animateBars() {
+  requestAnimationFrame(() => {
+    document.querySelectorAll('#dist-panel .dbar-fill').forEach((f) => { f.style.width = `${f.getAttribute('data-w') || 0}%`; });
+  });
 }
 function annotateEstado(byEstado) {
   const sel = $('[data-filter="estado_funcionario"]');
@@ -500,16 +520,18 @@ async function loadFacets() {
   panel.innerHTML = '';
   panel.append(
     el('div', { class: 'dist-head' }, [
-      el('div', {}, [el('strong', { text: '📊 Distribuição' }), el('span', { class: 'meta-sub', text: ` · ${fmt(d.total)} registro(s) no recorte atual` })]),
+      el('div', { class: 'dist-title' }, [el('strong', { text: '📊 Distribuição' }), el('span', { class: 'meta-sub', text: ` · ${fmt(d.total)} registro(s) no recorte atual` })]),
       el('a', { href: `/api/facets.csv?${queryParams()}`, class: 'btn ghost small' }, ['⤒ Exportar contagem']),
     ]),
+    el('div', { class: 'dist-hint', text: '💡 Clique numa barra para filtrar por aquele valor.' }),
     el('div', { class: 'dist-grid' }, [
-      distBars('Por Estado', d.byEstado),
-      distBars('Top Municípios', d.byMunicipio),
-      distBars('Top CID-10', d.byCid),
+      distBars('Por Estado', '🗺️', d.byEstado, d.total, 'estado_funcionario'),
+      distBars('Top Municípios', '🏙️', d.byMunicipio, d.total, 'municipio_funcionario'),
+      distBars('Top CID-10', '🩹', d.byCid, d.total, 'cid_10'),
     ]),
   );
   annotateEstado(d.byEstado);
+  animateBars();
 }
 function toggleDist() {
   state.distOpen = !state.distOpen;

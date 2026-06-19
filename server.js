@@ -10,6 +10,7 @@ const { importFilePath } = require('./importer');
 const store = require('./store');
 const auth = require('./auth');
 const { db, DB_PATH } = require('./db');
+const { normalizeUF } = require('./uf');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -91,6 +92,19 @@ function readFilters(req) {
   return filters;
 }
 
+const validCpfParam = (req) => req.query.valid_cpf === '1';
+const excludeProspectedParam = (req) => req.query.esconder_prospectados === '1';
+
+// Recorte completo (busca + filtros + CPF válido + esconder prospectados).
+function readOpts(req) {
+  return {
+    q: (req.query.q || '').trim(),
+    filters: readFilters(req),
+    validCpf: validCpfParam(req),
+    excludeProspected: excludeProspectedParam(req),
+  };
+}
+
 // --- Upload e importação (alimenta a base única, ignorando duplicatas) ---
 app.post('/api/upload', upload.array('files'), wrap(async (req, res) => {
   if (!req.files || req.files.length === 0) {
@@ -127,16 +141,12 @@ app.get('/api/columns', (req, res) => res.json(store.getColumns()));
 // --- Valores distintos de uma coluna (para os dropdowns de filtro) ---
 app.get('/api/distinct', wrap(async (req, res) => res.json(await store.distinctValues(req.query.col || ''))));
 
-const validCpfParam = (req) => req.query.valid_cpf === '1';
-
 // --- Lista de registros (paginação / busca full-text / filtros / ordenação) ---
 app.get('/api/records', (req, res) => {
   res.json(store.query({
+    ...readOpts(req),
     limit: req.query.limit,
     offset: req.query.offset,
-    q: req.query.q || '',
-    filters: readFilters(req),
-    validCpf: validCpfParam(req),
     sort: req.query.sort || null,
     dir: req.query.dir || 'asc',
   }));
@@ -184,10 +194,10 @@ app.get('/api/dedup', (req, res) => res.json(store.getDedupJob()));
 // --- Distribuição / facetas (quantidades por Estado, Município, CID) ---
 // Roda na thread de trabalho (worker), então não trava o servidor.
 app.get('/api/facets', wrap(async (req, res) => {
-  res.json(await store.facets({ q: (req.query.q || '').trim(), filters: readFilters(req), validCpf: validCpfParam(req) }));
+  res.json(await store.facets(readOpts(req)));
 }));
 app.get('/api/facets.csv', wrap(async (req, res) => {
-  const csv = await store.facetsCsv({ q: (req.query.q || '').trim(), filters: readFilters(req), validCpf: validCpfParam(req) });
+  const csv = await store.facetsCsv(readOpts(req));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lexflow_distribuicao.csv"');
   res.send('﻿' + csv);
@@ -201,7 +211,7 @@ app.get('/api/export.csv', (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lexflow_dados.csv"');
   res.write('﻿'); // BOM para o Excel reconhecer UTF-8
-  store.streamCsv({ q: (req.query.q || '').trim(), filters: readFilters(req), validCpf: validCpfParam(req) }, (chunk) => res.write(chunk));
+  store.streamCsv(readOpts(req), (chunk) => res.write(chunk));
   res.end();
 });
 
@@ -217,6 +227,58 @@ app.delete('/api/imports', (req, res) => {
 app.delete('/api/records', (req, res) => {
   store.clearAll();
   res.json({ ok: true });
+});
+
+// --- PROSPECÇÃO: marcar/desmarcar o recorte e gerenciar regiões ---
+// Registra a região (UF/município) embutida nos filtros do recorte que está
+// sendo marcado, para o controle "grosso" caminhar junto com a marcação fina.
+function autoRegiaoFromFilters(filters = {}) {
+  const uf = filters.estado_funcionario ? (normalizeUF(filters.estado_funcionario) || null) : null;
+  const mun = filters.municipio_funcionario ? String(filters.municipio_funcionario).trim() : null;
+  if (mun) { store.addRegiao({ escopo: 'municipio', uf, municipio: mun }); return { escopo: 'municipio', uf, municipio: mun }; }
+  if (uf) { store.addRegiao({ escopo: 'uf', uf, municipio: null }); return { escopo: 'uf', uf, municipio: null }; }
+  return null;
+}
+function defaultLote(filters = {}) {
+  const data = new Date().toLocaleDateString('pt-BR');
+  const partes = [filters.estado_funcionario, filters.municipio_funcionario, filters.cid_10].filter(Boolean);
+  return `${partes.length ? partes.join(' · ') : 'Recorte'} — ${data}`;
+}
+
+app.get('/api/prospect', (req, res) => res.json(store.prospectStats()));
+
+app.post('/api/prospect/marcar', (req, res) => {
+  const opts = readOpts(req);
+  const lote = (req.body && req.body.lote) || req.query.lote || defaultLote(opts.filters);
+  const marked = store.markProspect(opts, lote);
+  const regiao = autoRegiaoFromFilters(opts.filters);
+  res.json({ marked, lote, regiao, ...store.prospectStats() });
+});
+
+app.post('/api/prospect/desmarcar', (req, res) => {
+  const opts = readOpts(req);
+  const unmarked = store.unmarkProspect(opts);
+  res.json({ unmarked, ...store.prospectStats() });
+});
+
+app.post('/api/prospect/regioes', (req, res) => {
+  const { escopo, uf, municipio, nota } = req.body || {};
+  try {
+    const regioes = store.addRegiao({
+      escopo,
+      uf: uf ? (normalizeUF(uf) || uf) : null,
+      municipio: municipio ? String(municipio).trim() : null,
+      nota: nota || null,
+    });
+    res.json({ regioes });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/prospect/regioes', (req, res) => {
+  const id = parseInt(req.query.id, 10);
+  if (!id) return res.status(400).json({ error: 'Informe o id da região.' });
+  store.removeRegiao(id);
+  res.json({ ok: true, ...store.prospectStats() });
 });
 
 // Tratamento de erros (inclui limites do multer).

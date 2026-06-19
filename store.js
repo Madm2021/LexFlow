@@ -40,7 +40,7 @@ function bumpData() {
 // Invalida os caches persistentes (distribuição/dropdowns) quando a LÓGICA muda
 // — ex.: trocar o Top N da distribuição. Sem isto, o cache antigo continua sendo
 // servido após o deploy. Suba o número quando mudar facetas/distinct.
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 (function ensureCacheVersion() {
   try {
     if (getPersist('flag:cache_version') !== CACHE_VERSION) {
@@ -215,8 +215,9 @@ function getStats() {
   }));
 }
 
-function isUnfiltered({ q = '', filters = {}, validCpf = false } = {}) {
-  return !q && !validCpf && !ALL_FILTER_KEYS.some((k) => filters[k] != null && String(filters[k]).trim() !== '');
+function isUnfiltered({ q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
+  return !q && !validCpf && !excludeProspected
+    && !ALL_FILTER_KEYS.some((k) => filters[k] != null && String(filters[k]).trim() !== '');
 }
 
 function query(opts = {}) {
@@ -236,8 +237,8 @@ function streamCsv(opts, write) {
 // ---------------------------------------------------------------------------
 let facetsAllInflight = null;
 
-async function facets({ q = '', filters = {}, validCpf = false } = {}) {
-  if (isUnfiltered({ q, filters, validCpf })) {
+async function facets({ q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
+  if (isUnfiltered({ q, filters, validCpf, excludeProspected })) {
     const p = getPersist('facets_all');
     if (p) return p;
     if (facetsAllInflight) return facetsAllInflight;
@@ -246,9 +247,9 @@ async function facets({ q = '', filters = {}, validCpf = false } = {}) {
       .catch((e) => { facetsAllInflight = null; throw e; });
     return facetsAllInflight;
   }
-  const key = `facets:${JSON.stringify({ q, filters, validCpf })}`;
+  const key = `facets:${JSON.stringify({ q, filters, validCpf, excludeProspected })}`;
   if (memo[key] && memo[key].v === dataVersion) return memo[key].value;
-  const r = await ask('facets', { q, filters, validCpf });
+  const r = await ask('facets', { q, filters, validCpf, excludeProspected });
   memo[key] = { v: dataVersion, value: r };
   return r;
 }
@@ -486,6 +487,60 @@ function dedupStep(chunkKeys = 2000) {
 }
 
 // ---------------------------------------------------------------------------
+// PROSPECÇÃO: marca/desmarca leads do recorte atual como "em prospecção" e
+// mantém a lista de regiões (UF/município) sinalizadas. A marcação fina por
+// registro é o que impede puxar a mesma lista 2x; a região é o controle grosso.
+// ---------------------------------------------------------------------------
+// Constrói o "WHERE _rowid IN (recorte)" a partir de q + filtros (mesma lógica
+// da busca), para marcar/desmarcar exatamente o que o usuário está vendo.
+function prospectSubquery(opts) {
+  const { from, whereSql, params } = core.buildQuery(opts);
+  return { sql: `SELECT r._rowid ${from} ${whereSql}`, params };
+}
+
+function markProspect(opts = {}, lote = null) {
+  const { sql, params } = prospectSubquery(opts);
+  const at = new Date().toISOString();
+  const info = db.prepare(
+    `UPDATE records SET _prospect = 1, _prospect_at = ?, _prospect_lote = ?
+     WHERE _prospect IS NULL AND _rowid IN (${sql})`,
+  ).run(at, lote, ...params);
+  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
+  return info.changes;
+}
+
+function unmarkProspect(opts = {}) {
+  const { sql, params } = prospectSubquery(opts);
+  const info = db.prepare(
+    `UPDATE records SET _prospect = NULL, _prospect_at = NULL, _prospect_lote = NULL
+     WHERE _prospect = 1 AND _rowid IN (${sql})`,
+  ).run(...params);
+  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
+  return info.changes;
+}
+
+function listRegioes() {
+  return db.prepare('SELECT * FROM prospect_regioes ORDER BY criado_em DESC, id DESC').all();
+}
+function addRegiao({ escopo, uf = null, municipio = null, nota = null }) {
+  if (escopo !== 'uf' && escopo !== 'municipio') throw new Error('Escopo inválido.');
+  db.prepare(
+    `INSERT INTO prospect_regioes (escopo, uf, municipio, nota, criado_em)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(escopo, uf, municipio) DO UPDATE SET nota = COALESCE(excluded.nota, prospect_regioes.nota)`,
+  ).run(escopo, uf, municipio, nota, new Date().toISOString());
+  return listRegioes();
+}
+function removeRegiao(id) {
+  const info = db.prepare('DELETE FROM prospect_regioes WHERE id = ?').run(id);
+  return info.changes;
+}
+function prospectStats() {
+  const totalMarcados = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _prospect = 1').get().n;
+  return { totalMarcados, regioes: listRegioes() };
+}
+
+// ---------------------------------------------------------------------------
 // Histórico e remoção.
 // ---------------------------------------------------------------------------
 function listImports() {
@@ -531,6 +586,12 @@ module.exports = {
   dedupStep,
   dedupPending,
   resumeDedup,
+  markProspect,
+  unmarkProspect,
+  listRegioes,
+  addRegiao,
+  removeRegiao,
+  prospectStats,
   listImports,
   deleteBySource,
   clearAll,

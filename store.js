@@ -555,32 +555,58 @@ function buildCidIndex() {
 // ---------------------------------------------------------------------------
 // CLIENTES (dar baixa): casa os CPFs do arquivo de clientes com a base e marca
 // os registros como cliente fechado, para sumirem de todos os recortes.
+// Roda em LOTES (por faixa de _rowid), em segundo plano — não trava o servidor
+// nem pesa a memória, e nunca estoura o tempo do proxy (sem 502).
 // ---------------------------------------------------------------------------
 // Só os dígitos do CPF gravado (vem formatado "xxx.xxx.xxx-xx").
 const CPF_DIGITS = "replace(replace(replace(replace(COALESCE(cpf,''),'.',''),'-',''),' ',''),'/','')";
 
-function marcarClientes(cpfs) {
-  if (!cpfs || cpfs.length === 0) return 0;
-  let changes = 0;
-  const at = new Date().toISOString();
-  const tx = db.transaction(() => {
-    db.exec('DROP TABLE IF EXISTS _cli');
-    db.exec('CREATE TEMP TABLE _cli (cpf TEXT PRIMARY KEY)');
-    const ins = db.prepare('INSERT OR IGNORE INTO _cli(cpf) VALUES (?)');
-    for (const c of cpfs) ins.run(c);
-    const info = db.prepare(
-      `UPDATE records SET _cliente = 1, _cliente_at = ?
-       WHERE _cliente IS NULL AND ${CPF_DIGITS} IN (SELECT cpf FROM _cli)`,
-    ).run(at);
-    changes = info.changes;
-    db.exec('DROP TABLE IF EXISTS _cli');
-  });
-  tx();
-  // A baixa muda o que aparece em TODO recorte: invalida os caches.
-  if (changes > 0) bumpData();
-  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
-  return changes;
+let baixa = { running: false, total: 0, done: 0, marked: 0, cpfCount: 0, finishedAt: null };
+
+// Prepara o job: grava os CPFs do arquivo numa tabela e zera o cursor.
+function startBaixa(cpfs) {
+  db.exec('DROP TABLE IF EXISTS baixa_cpf');
+  db.exec('CREATE TABLE baixa_cpf (cpf TEXT PRIMARY KEY)');
+  const ins = db.prepare('INSERT OR IGNORE INTO baixa_cpf(cpf) VALUES (?)');
+  db.transaction((arr) => { for (const c of arr) ins.run(c); })(cpfs);
+  const max = db.prepare('SELECT COALESCE(MAX(_rowid), 0) AS m FROM records').get().m;
+  baixa = { running: true, total: max, done: 0, marked: 0, cpfCount: cpfs.length, finishedAt: null };
+  return baixa;
 }
+
+// Retoma um job que ficou pela metade (ex.: reinício): a tabela ainda existe.
+function resumeBaixa() {
+  const has = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='baixa_cpf'").get();
+  if (!has) return false;
+  const cpfCount = db.prepare('SELECT COUNT(*) AS n FROM baixa_cpf').get().n;
+  if (!cpfCount) { db.exec('DROP TABLE IF EXISTS baixa_cpf'); return false; }
+  const max = db.prepare('SELECT COALESCE(MAX(_rowid), 0) AS m FROM records').get().m;
+  baixa = { running: true, total: max, done: 0, marked: 0, cpfCount, finishedAt: null };
+  return true;
+}
+
+// Processa uma faixa de _rowid. Marca quem bate (e ainda está livre). Idempotente.
+function baixaStep(batch = 50000) {
+  if (!baixa.running) return 0;
+  const lo = baixa.done;
+  const hi = Math.min(lo + batch, baixa.total);
+  const info = db.prepare(
+    `UPDATE records SET _cliente = 1, _cliente_at = ?
+     WHERE _cliente IS NULL AND _rowid > ? AND _rowid <= ?
+       AND ${CPF_DIGITS} IN (SELECT cpf FROM baixa_cpf)`,
+  ).run(new Date().toISOString(), lo, hi);
+  baixa.marked += info.changes;
+  baixa.done = hi;
+  if (hi >= baixa.total) {
+    baixa.running = false;
+    baixa.finishedAt = new Date().toISOString();
+    db.exec('DROP TABLE IF EXISTS baixa_cpf');
+    bumpData(); // a baixa muda o que aparece em todo recorte
+  }
+  return hi - lo;
+}
+
+function getBaixaJob() { return baixa; }
 
 function clientesStats() {
   return { total: db.prepare('SELECT COUNT(*) AS n FROM records WHERE _cliente = 1').get().n };
@@ -639,7 +665,10 @@ module.exports = {
   removeRegiao,
   prospectStats,
   buildCidIndex,
-  marcarClientes,
+  startBaixa,
+  resumeBaixa,
+  baixaStep,
+  getBaixaJob,
   clientesStats,
   listImports,
   deleteBySource,

@@ -21,11 +21,13 @@ function ftsQuery(q) {
 }
 
 // Monta FROM/WHERE/params a partir de q + filtros (+ apenas CPF válido).
-function buildQuery({ q = '', filters = {}, validCpf = false } = {}) {
+function buildQuery({ q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
   const where = [];
   const params = [];
   let from = 'FROM records r';
   if (validCpf) where.push('r._cpf_ok = 1');
+  // "Esconder já prospectados": deixa de fora os leads já carimbados.
+  if (excludeProspected) where.push('r._prospect IS NULL');
 
   const ftsTerms = [];
   if (q) { const fq = ftsQuery(q); if (fq) ftsTerms.push(fq); }
@@ -82,9 +84,9 @@ function excelCell(v) {
 }
 
 // --- Busca paginada (rápida: usa FTS/índices) ---
-function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = false, sort = null, dir = 'asc' } = {}, total) {
+function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = false, excludeProspected = false, sort = null, dir = 'asc' } = {}, total) {
   const columns = COLUMNS.map((c) => ({ column_name: c.key, original_name: c.label }));
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
 
   let orderBy = 'ORDER BY r._rowid ASC';
   if (sort && COLUMN_KEYS.includes(sort)) {
@@ -104,8 +106,8 @@ function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = fa
   return { columns, rows, total, limit: safeLimit, offset: safeOffset };
 }
 
-function count(db, { q = '', filters = {}, validCpf = false } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
+function count(db, { q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
   return db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n;
 }
 
@@ -127,20 +129,68 @@ function estadoCounts(db, from, whereSql, params, limit) {
   return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([value, n]) => ({ value, n }));
 }
 
-function computeFacets(db, { q = '', filters = {}, validCpf = false } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
+// --- Ano do registro ---------------------------------------------------------
+// O ano sai dos 4 primeiros dígitos da CAT (ex.: "2005..."); quando o lead NÃO
+// tem CAT (ou a CAT não começa por um ano plausível), cai para o ano da Data
+// Atend. — os dois se complementam. Quem não tem nenhum dos dois fica "sem ano".
+function yearExpr() {
+  const maxY = new Date().getFullYear() + 1;
+  const cat = "replace(replace(replace(replace(COALESCE(r.cat,''),'.',''),'-',''),'/',''),' ','')";
+  const catY = `CAST(substr(${cat},1,4) AS INTEGER)`;
+  const da = "COALESCE(r.data_atend,'')";
+  const daIso = `CAST(substr(${da},1,4) AS INTEGER)`;   // aaaa-mm-dd
+  const daBr = `CAST(substr(${da},7,4) AS INTEGER)`;     // dd/mm/aaaa
+  // GLOB usa ? (um caractere) e * (qualquer sequência) — diferente do LIKE.
+  return `CASE
+    WHEN length(${cat}) >= 4 AND ${catY} BETWEEN 1990 AND ${maxY} THEN ${catY}
+    WHEN ${da} GLOB '????-??*' AND ${daIso} BETWEEN 1990 AND ${maxY} THEN ${daIso}
+    WHEN ${da} GLOB '??/??/????*' AND ${daBr} BETWEEN 1990 AND ${maxY} THEN ${daBr}
+    ELSE NULL END`;
+}
+
+// Contagem por ano (ordenada do mais recente ao mais antigo) + os "sem ano".
+function yearCounts(db, from, whereSql, params) {
+  const y = yearExpr();
+  const rows = db.prepare(
+    `SELECT ${y} AS y, COUNT(*) AS n ${from} ${whereSql} GROUP BY y`,
+  ).all(...params);
+  const semAno = rows.filter((r) => r.y == null).reduce((s, r) => s + r.n, 0);
+  const byAno = rows.filter((r) => r.y != null)
+    .sort((a, b) => b.y - a.y)
+    .map((r) => ({ value: String(r.y), n: r.n }));
+  return { byAno, semAno };
+}
+
+// Quantos leads NÃO têm número de CAT.
+function semCatCount(db, from, whereSql, params) {
+  const base = whereSql ? `${whereSql} AND ` : 'WHERE ';
+  return db.prepare(
+    `SELECT COUNT(*) AS n ${from} ${base} (r.cat IS NULL OR trim(r.cat) = '')`,
+  ).get(...params).n;
+}
+
+function computeFacets(db, { q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
+  const { byAno, semAno } = yearCounts(db, from, whereSql, params);
   return {
     total: db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n,
     byEstado: estadoCounts(db, from, whereSql, params, 10),
     byMunicipio: topBy(db, 'municipio_funcionario', 10, from, whereSql, params),
     byCid: topBy(db, 'cid_10', 10, from, whereSql, params),
+    byAno,
+    semAno,
+    semCat: semCatCount(db, from, whereSql, params),
   };
 }
 
-function computeFacetsCsv(db, { q = '', filters = {}, validCpf = false } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
+function computeFacetsCsv(db, { q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
   const lines = [['Dimensão', 'Valor', 'Quantidade'].join(CSV_SEP)];
   const push = (label, rows) => rows.forEach((r) => lines.push([label, csvEscape(r.value), r.n].join(CSV_SEP)));
+  const { byAno, semAno } = yearCounts(db, from, whereSql, params);
+  push('Ano', byAno);
+  if (semAno) lines.push(['Ano', 'Sem ano', semAno].join(CSV_SEP));
+  lines.push(['CAT', 'Sem CAT', semCatCount(db, from, whereSql, params)].join(CSV_SEP));
   push('Estado', estadoCounts(db, from, whereSql, params, 100));
   push('Município', topBy(db, 'municipio_funcionario', 1000, from, whereSql, params));
   push('CID-10', topBy(db, 'cid_10', 1000, from, whereSql, params));
@@ -162,8 +212,8 @@ function computeDistinct(db, col) {
   return raw.map((r) => r.v);
 }
 
-function streamCsv(db, { q = '', filters = {}, validCpf = false } = {}, write) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
+function streamCsv(db, { q = '', filters = {}, validCpf = false, excludeProspected = false } = {}, write) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
   // Sem a coluna "Origem": exporta de CAT em diante, na ordem do schema.
   write(COLUMNS.map((c) => csvEscape(c.label)).join(CSV_SEP) + '\r\n');
   const selectCols = COLUMN_KEYS.map((k) => `r."${k}"`).join(', ');

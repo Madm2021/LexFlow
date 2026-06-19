@@ -208,6 +208,32 @@ if (!tableColumns('records').includes('_key')) {
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_key ON records(_key) WHERE _key IS NOT NULL');
 
+// PROSPECÇÃO: marca, no próprio registro, que aquele lead já foi exportado/está
+// sendo trabalhado (para não puxar a mesma lista 2x).
+//  _prospect      = 1 quando o lead está em prospecção (NULL = ainda livre).
+//  _prospect_at   = quando foi marcado (ISO).
+//  _prospect_lote = rótulo do lote/recorte que marcou (ex.: "SP — 19/06/2026").
+// Índice parcial (só sobre os marcados) deixa instantâneo tanto o "esconder já
+// prospectados" quanto a contagem de marcados, sem pesar na base inteira.
+for (const [col, type] of [['_prospect', 'INTEGER'], ['_prospect_at', 'TEXT'], ['_prospect_lote', 'TEXT']]) {
+  if (!tableColumns('records').includes(col)) db.exec(`ALTER TABLE records ADD COLUMN ${col} ${type}`);
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_prospect ON records(_prospect) WHERE _prospect IS NOT NULL');
+
+// Regiões (UF ou município) sinalizadas como "em prospecção". É o controle
+// grosso (a região toda), que convive com a marcação fina por registro acima.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS prospect_regioes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    escopo     TEXT NOT NULL,            -- 'uf' ou 'municipio'
+    uf         TEXT,
+    municipio  TEXT,
+    nota       TEXT,
+    criado_em  TEXT NOT NULL,
+    UNIQUE(escopo, uf, municipio)
+  );
+`);
+
 // Popula o índice full-text a partir dos dados existentes quando a tabela FTS
 // acabou de ser criada (1ª vez ou logo após a migração). Em reinícios normais
 // o índice já está populado (mantido pelos triggers), então não reconstrói.

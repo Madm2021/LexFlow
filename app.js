@@ -2,7 +2,7 @@
 
 const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario', 'cid_10'];
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, validCpf: false, distOpen: false, lastData: null };
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, validCpf: false, excludeProspected: false, distOpen: false, lastData: null };
 
 // Agrupamento dos campos na "ficha do registro".
 const FIELD_GROUPS = [
@@ -70,9 +70,10 @@ function queryParams(extra = {}) {
   const p = new URLSearchParams({ q: state.q, ...extra });
   for (const k of FILTER_KEYS) if (state.filters[k]) p.set(k, state.filters[k]);
   if (state.validCpf) p.set('valid_cpf', '1');
+  if (state.excludeProspected) p.set('esconder_prospectados', '1');
   return p;
 }
-function hasFilters() { return state.validCpf || FILTER_KEYS.some((k) => state.filters[k]); }
+function hasFilters() { return state.validCpf || state.excludeProspected || FILTER_KEYS.some((k) => state.filters[k]); }
 
 async function loadStats() {
   try {
@@ -259,6 +260,12 @@ function renderChips() {
     $('#filter-clear').hidden = !hasFilters();
     state.offset = 0; loadRecords();
   }]);
+  if (state.excludeProspected) chips.push(['Filtro', 'Esconder já prospectados', () => {
+    state.excludeProspected = false;
+    const hp = $('#f-hide-prospected'); if (hp) hp.checked = false;
+    $('#filter-clear').hidden = !hasFilters();
+    state.offset = 0; loadRecords();
+  }]);
   if (chips.length === 0) { box.hidden = true; return; }
   box.hidden = false;
   chips.forEach(([k, v, onRemove]) => box.appendChild(el('span', { class: 'chip' }, [
@@ -282,7 +289,9 @@ function applyFilters() {
 function clearFilters() {
   state.filters = {};
   state.validCpf = false;
+  state.excludeProspected = false;
   const vc = $('#f-valid-cpf'); if (vc) vc.checked = false;
+  const hp = $('#f-hide-prospected'); if (hp) hp.checked = false;
   FILTER_KEYS.forEach((k) => { const n = $(`[data-filter="${k}"]`); if (n) n.value = ''; });
   $('#filter-clear').hidden = true;
   state.offset = 0;
@@ -518,13 +527,22 @@ async function loadFacets() {
   try { d = await api(`/api/facets?${queryParams()}`); }
   catch (e) { panel.innerHTML = `<div class="spinner">${e.message}</div>`; return; }
   panel.innerHTML = '';
+  const semAno = d.semAno || 0;
+  const semCat = d.semCat || 0;
+  const anoItems = (d.byAno || []).slice();
+  if (semAno) anoItems.push({ value: 'Sem ano', n: semAno });
   panel.append(
     el('div', { class: 'dist-head' }, [
       el('div', { class: 'dist-title' }, [el('strong', { text: '📊 Distribuição' }), el('span', { class: 'meta-sub', text: ` · ${fmt(d.total)} registro(s) no recorte atual` })]),
       el('a', { href: `/api/facets.csv?${queryParams()}`, class: 'btn ghost small' }, ['⤒ Exportar contagem']),
     ]),
-    el('div', { class: 'dist-hint', text: '💡 Clique numa barra para filtrar por aquele valor.' }),
+    el('div', { class: 'dist-hint', text: '💡 Clique numa barra de Estado, Município ou CID para filtrar por aquele valor.' }),
+    el('div', { class: 'dist-notes' }, [
+      el('span', { class: 'dist-note' }, ['🔢 ', el('strong', { text: fmt(semCat) }), ` lead(s) sem número de CAT`]),
+      semAno ? el('span', { class: 'dist-note' }, ['📅 ', el('strong', { text: fmt(semAno) }), ` sem ano identificado`]) : null,
+    ]),
     el('div', { class: 'dist-grid' }, [
+      distBars('Por ano', '📅', anoItems, d.total, null),
       distBars('Top 10 Estados', '🗺️', d.byEstado, d.total, 'estado_funcionario'),
       distBars('Top 10 Municípios', '🏙️', d.byMunicipio, d.total, 'municipio_funcionario'),
       distBars('Top 10 CID-10', '🩹', d.byCid, d.total, 'cid_10'),
@@ -538,6 +556,72 @@ function toggleDist() {
   $('#dist-panel').hidden = !state.distOpen;
   $('#dist-btn').classList.toggle('active', state.distOpen);
   if (state.distOpen) loadFacets();
+}
+
+// ===== Prospecção =====
+// Descreve, em texto, o recorte que será marcado (busca + filtros ativos).
+function recorteDescricao() {
+  const parts = [];
+  if (state.q) parts.push(`busca “${state.q}”`);
+  const labels = { estado_funcionario: 'Estado', municipio_funcionario: 'Município', cid_10: 'CID-10' };
+  FILTER_KEYS.forEach((k) => { if (state.filters[k]) parts.push(`${labels[k]}: ${state.filters[k]}`); });
+  if (state.validCpf) parts.push('apenas CPF válido');
+  return parts.length ? parts.join(' · ') : 'Toda a base (sem filtro)';
+}
+function renderProspect(d) {
+  const sum = $('#prospect-summary');
+  sum.innerHTML = '';
+  sum.append(
+    el('div', { class: 'stat-card' }, [el('span', { class: 'stat-num', text: fmt(d.totalMarcados || 0) }), el('span', { class: 'stat-label', text: 'leads em prospecção' })]),
+    el('div', { class: 'stat-card' }, [el('span', { class: 'stat-num', text: fmt((d.regioes || []).length) }), el('span', { class: 'stat-label', text: 'regiões marcadas' })]),
+  );
+  const list = $('#prospect-regioes-list');
+  list.innerHTML = '';
+  if (!d.regioes || d.regioes.length === 0) { list.innerHTML = '<div class="spinner">Nenhuma região marcada ainda.</div>'; return; }
+  d.regioes.forEach((r) => {
+    const nome = r.escopo === 'municipio' ? `${r.municipio || '—'}${r.uf ? ` / ${r.uf}` : ''}` : (r.uf || '—');
+    const tipo = r.escopo === 'municipio' ? '🏙️ Município' : '🗺️ Estado';
+    list.appendChild(el('div', { class: 'import-row' }, [
+      el('div', {}, [
+        el('div', { class: 'imp-name', text: `${tipo}: ${nome}` }),
+        el('div', { class: 'imp-meta', text: `marcada em ${new Date(r.criado_em).toLocaleString('pt-BR')}` }),
+      ]),
+      el('button', { class: 'btn ghost small danger-text', text: 'Remover', onClick: () => removeRegiao(r.id) }),
+    ]));
+  });
+}
+async function loadProspect() {
+  const desc = $('#prospect-recorte-desc');
+  desc.innerHTML = '';
+  desc.append(el('span', { class: 'chip-k', text: 'Recorte atual: ' }), el('strong', { text: recorteDescricao() }));
+  const p = new URLSearchParams(queryParams());
+  p.set('esconder_prospectados', '1');
+  $('#prospect-export-link').href = `/api/export.csv?${p}`;
+  try { renderProspect(await api('/api/prospect')); } catch (e) { /* silencioso */ }
+}
+function openProspect() { $('#prospect-modal').hidden = false; loadProspect(); }
+function closeProspect() { $('#prospect-modal').hidden = true; }
+async function markRecorte() {
+  if (!confirm(`Marcar como EM PROSPECÇÃO os leads de:\n\n${recorteDescricao()}\n\nDepois é só ligar “Esconder já prospectados” para não puxar a mesma lista de novo.`)) return;
+  try {
+    const d = await api(`/api/prospect/marcar?${queryParams()}`, { method: 'POST' });
+    toast(`${fmt(d.marked)} lead(s) marcado(s) em prospecção. 🎯`, 'ok');
+    renderProspect(d);
+    loadRecords();
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function unmarkRecorte() {
+  if (!confirm(`Desmarcar (liberar) os leads de:\n\n${recorteDescricao()}?`)) return;
+  try {
+    const d = await api(`/api/prospect/desmarcar?${queryParams()}`, { method: 'POST' });
+    toast(`${fmt(d.unmarked)} lead(s) liberado(s).`, 'ok');
+    renderProspect(d);
+    loadRecords();
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function removeRegiao(id) {
+  try { renderProspect(await api(`/api/prospect/regioes?id=${id}`, { method: 'DELETE' })); }
+  catch (e) { toast(e.message, 'err'); }
 }
 
 // ===== Wiring =====
@@ -565,8 +649,15 @@ function init() {
   });
   $('#filter-clear').addEventListener('click', clearFilters);
   $('#f-valid-cpf').addEventListener('change', (e) => { state.validCpf = e.target.checked; $('#filter-clear').hidden = !hasFilters(); state.offset = 0; loadRecords(); });
+  $('#f-hide-prospected').addEventListener('change', (e) => { state.excludeProspected = e.target.checked; $('#filter-clear').hidden = !hasFilters(); state.offset = 0; loadRecords(); });
   $('#hygiene-btn').addEventListener('click', startHygiene);
   $('#dedup-btn').addEventListener('click', startDedup);
+
+  // Prospecção
+  $('#prospect-btn').addEventListener('click', openProspect);
+  document.querySelectorAll('[data-close-prospect]').forEach((n) => n.addEventListener('click', closeProspect));
+  $('#prospect-mark-btn').addEventListener('click', markRecorte);
+  $('#prospect-unmark-btn').addEventListener('click', unmarkRecorte);
 
   // Seletor de colunas + ficha do registro
   $('#col-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleColMenu(); });
@@ -580,7 +671,7 @@ function init() {
   $('#dist-btn').addEventListener('click', toggleDist);
   $('#import-btn').addEventListener('click', openImport);
   document.querySelectorAll('[data-close-modal]').forEach((n) => n.addEventListener('click', closeImport));
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeImport(); closeRecord(); const cm = $('#col-panel'); if (cm) cm.hidden = true; } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeImport(); closeRecord(); closeProspect(); const cm = $('#col-panel'); if (cm) cm.hidden = true; } });
   const dz = $('#dropzone');
   const input = $('#file-input');
   dz.addEventListener('click', () => input.click());

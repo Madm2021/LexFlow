@@ -19,6 +19,7 @@
     <div class="top-actions">
       <button id="theme-toggle" class="icon-btn" title="Alternar tema claro/escuro" aria-label="Alternar tema">🌙</button>
       <button id="dist-btn" class="btn ghost">📊 Distribuição</button>
+      <button id="prospect-btn" class="btn ghost">🎯 Prospecção</button>
       <button id="import-btn" class="btn ghost">⤓ Importar</button>
       <a id="export-link" href="/api/export.csv" class="btn ghost">⤒ Exportar</a>
       <a id="logout-link" href="/logout" class="btn ghost danger-text" hidden>Sair</a>
@@ -67,6 +68,7 @@
         <input id="f-cid_10" data-filter="cid_10" placeholder="ex.: S62" autocomplete="off" />
       </div>
       <label class="check-field"><input type="checkbox" id="f-valid-cpf" /> Apenas CPF válido</label>
+      <label class="check-field"><input type="checkbox" id="f-hide-prospected" /> Esconder já prospectados</label>
       <button id="filter-clear" class="btn ghost small" hidden>Limpar filtros</button>
     </section>
 
@@ -148,6 +150,39 @@
       </div>
 
       <div id="imports-panel" class="imports-panel"></div>
+    </div>
+  </div>
+
+  <!-- Modal de prospecção -->
+  <div id="prospect-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-prospect></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>🎯 Prospecção</h2>
+        <button class="icon-btn" data-close-prospect title="Fechar">×</button>
+      </div>
+
+      <div id="prospect-summary" class="prospect-summary"></div>
+
+      <div class="hygiene-box">
+        <div class="hygiene-head"><strong>Marcar o recorte atual</strong></div>
+        <div class="imp-meta">
+          Carimba como <strong>em prospecção</strong> os leads do recorte que você está vendo agora
+          (busca + filtros). Depois, marque <strong>“Esconder já prospectados”</strong> para não puxar a mesma lista de novo.
+          Se houver Estado/Município no filtro, a região entra na lista abaixo automaticamente.
+        </div>
+        <div id="prospect-recorte-desc" class="prospect-recorte"></div>
+        <div class="prospect-actions">
+          <button id="prospect-mark-btn" class="btn primary small">🎯 Marcar como em prospecção</button>
+          <button id="prospect-unmark-btn" class="btn ghost small">Desmarcar este recorte</button>
+          <a id="prospect-export-link" class="btn ghost small" href="/api/export.csv">⤒ Exportar só os não prospectados</a>
+        </div>
+      </div>
+
+      <div class="prospect-regioes">
+        <h3>Regiões em prospecção</h3>
+        <div id="prospect-regioes-list" class="imports-panel"></div>
+      </div>
     </div>
   </div>
 

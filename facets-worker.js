@@ -9,6 +9,9 @@ const Database = require('better-sqlite3');
 const core = require('./querycore');
 
 const DB_PATH = process.env.LEXFLOW_DB || path.join(__dirname, 'data', 'lexflow.db');
+// Temporários (a tabela _hits dos recortes, ordenações) vão para o disco do
+// volume, não para a RAM. Vale também para a conexão do worker.
+if (!process.env.SQLITE_TMPDIR) process.env.SQLITE_TMPDIR = path.dirname(DB_PATH);
 const db = new Database(DB_PATH, { readonly: true });
 db.pragma('cache_size = -131072');
 db.pragma('mmap_size = 268435456');

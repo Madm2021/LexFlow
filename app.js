@@ -18,6 +18,14 @@ function loadHiddenCols() { try { return new Set(JSON.parse(localStorage.getItem
 function saveHiddenCols() { try { localStorage.setItem('lexflow-hidden-cols', JSON.stringify([...hiddenCols])); } catch (e) { /* ignora */ } }
 const hiddenCols = loadHiddenCols();
 
+// Tamanho de página (registros por página): lembrado entre sessões.
+const PAGE_SIZES = [50, 100, 200, 500];
+(function loadPageSize() {
+  const s = parseInt(localStorage.getItem('lexflow-page-size'), 10);
+  if (PAGE_SIZES.includes(s)) state.limit = s;
+}());
+function savePageSize() { try { localStorage.setItem('lexflow-page-size', String(state.limit)); } catch (e) { /* ignora */ } }
+
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
   const node = document.createElement(tag);
@@ -178,8 +186,12 @@ function renderResults(data) {
 
   const from = offset + 1;
   const to = Math.min(offset + limit, total);
+  const sizeSel = el('select', {
+    class: 'page-size', title: 'Registros por página',
+    onChange: (e) => { state.limit = parseInt(e.target.value, 10); state.offset = 0; savePageSize(); loadRecords(); },
+  }, PAGE_SIZES.map((s) => el('option', s === limit ? { value: s, selected: '' } : { value: s }, [`${s} / página`])));
   const pager = el('div', { class: 'pager' }, [
-    el('div', { class: 'info', text: `Mostrando ${fmt(from)}–${fmt(to)} de ${fmt(total)}` }),
+    el('div', { class: 'info' }, [`Mostrando ${fmt(from)}–${fmt(to)} de ${fmt(total)}`, el('span', { class: 'sep', text: '·' }), sizeSel]),
     el('div', { class: 'controls' }, [
       el('button', { class: 'btn ghost small', text: '◀ Anterior', disabled: offset <= 0 ? '' : null, onClick: () => { state.offset = Math.max(0, offset - limit); loadRecords(); } }),
       el('button', { class: 'btn ghost small', text: 'Próxima ▶', disabled: to >= total ? '' : null, onClick: () => { state.offset = offset + limit; loadRecords(); } }),

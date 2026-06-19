@@ -197,7 +197,10 @@ td.origin { color: var(--muted); font-size: 12.5px; }
 
 /* ===== Paginação ===== */
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
-.pager .info { color: var(--muted); font-size: 13px; }
+.pager .info { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.pager .info .sep { opacity: .5; }
+.page-size { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; font-size: 12.5px; cursor: pointer; }
+.page-size:focus { outline: none; border-color: var(--accent); }
 .pager .controls { display: flex; gap: 8px; }
 
 /* ===== Modal de importação ===== */

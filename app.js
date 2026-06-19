@@ -467,9 +467,10 @@ function closeImport() { $('#import-modal').hidden = true; }
 // ===== Clientes (dar baixa por CPF) =====
 async function loadClientesCount() {
   try {
-    const s = await api('/api/clientes');
+    const d = await api('/api/clientes');
     const n = $('#clientes-count');
-    if (n) n.textContent = s.total ? `Atualmente ${fmt(s.total)} registro(s) em baixa.` : '';
+    if (n) n.textContent = d.total ? `Atualmente ${fmt(d.total)} registro(s) em baixa.` : '';
+    if (d.job && d.job.running) pollBaixa(); // já tem uma baixa rodando
   } catch (e) { /* silencioso */ }
 }
 async function uploadClientes(files) {
@@ -480,13 +481,36 @@ async function uploadClientes(files) {
   form.append('file', files[0]);
   try {
     const r = await api('/api/clientes/baixa', { method: 'POST', body: form });
-    fb.innerHTML = `<div class="line ok">✓ ${fmt(r.marcados)} registro(s) marcados como cliente (baixa). ${fmt(r.cpfsNoArquivo)} CPF(s) no arquivo · ${fmt(r.totalClientes)} em baixa no total.</div>`;
-    loadClientesCount();
-    state.offset = 0;
-    await Promise.all([loadStats(), loadRecords()]);
+    fb.innerHTML = `<div class="line">Arquivo lido: ${fmt(r.cpfsNoArquivo)} CPF(s). Dando baixa em segundo plano (pode continuar usando o sistema)...</div>`;
+    pollBaixa();
   } catch (e) {
     fb.innerHTML = `<div class="line err">✕ ${e.message}</div>`;
   }
+}
+function pollBaixa() {
+  $('#clientes-btn').disabled = true;
+  const box = $('#clientes-progress');
+  const tick = async () => {
+    let d;
+    try { d = await api('/api/clientes'); } catch (e) { setTimeout(tick, 2000); return; }
+    const j = d.job || {};
+    if (j.running) {
+      const pct = Math.min(100, Math.round(((j.done || 0) / (j.total || 1)) * 100));
+      box.hidden = false;
+      box.innerHTML = `<div class="maint-prog-label">Dando baixa... ${fmt(j.marked || 0)} casado(s)</div>`
+        + `<div class="maint-prog-track"><div class="maint-prog-fill" style="width:${pct}%"></div></div>`
+        + `<div class="maint-prog-pct">${pct}%</div>`;
+      setTimeout(tick, 1200);
+      return;
+    }
+    box.hidden = true;
+    $('#clientes-btn').disabled = false;
+    $('#clientes-feedback').innerHTML = `<div class="line ok">✓ Baixa concluída — ${fmt(d.total)} registro(s) em baixa no total. Eles somem da prospecção e da exportação.</div>`;
+    loadClientesCount();
+    state.offset = 0;
+    await Promise.all([loadStats(), loadRecords()]);
+  };
+  tick();
 }
 
 async function uploadFiles(files) {

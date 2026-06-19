@@ -135,18 +135,33 @@ app.post('/api/upload', upload.array('files'), wrap(async (req, res) => {
   res.json({ imported, errors });
 }));
 
-// --- Dar baixa em clientes (contrato assinado): casa por CPF e marca/oculta ---
+// --- Dar baixa em clientes (contrato assinado): casa por CPF, em lotes ---
+let baixaChunks = 0;
+function driveBaixa() {
+  if (!store.getBaixaJob().running) return;
+  let n = 0;
+  try { n = store.baixaStep(50000); } catch (e) { console.error('baixa:', e.message); }
+  baixaChunks += 1;
+  // Esvazia o WAL de tempos em tempos: mantém a memória baixa numa varredura
+  // grande (mesma lógica do reunir-duplicados).
+  if (baixaChunks % 20 === 0) { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ } }
+  if (store.getBaixaJob().running) setTimeout(driveBaixa, n > 0 ? 60 : 1000);
+  else { baixaChunks = 0; try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ } }
+}
 app.post('/api/clientes/baixa', upload.single('file'), wrap(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+  if (store.getBaixaJob().running) return res.status(409).json({ error: 'Já há uma baixa em andamento.' });
   try {
     const cpfs = await extractCpfs(req.file.path, req.file.originalname);
-    const marcados = store.marcarClientes([...cpfs]);
-    res.json({ cpfsNoArquivo: cpfs.size, marcados, totalClientes: store.clientesStats().total });
+    if (cpfs.size === 0) return res.status(400).json({ error: 'Nenhum CPF válido encontrado (procuro na coluna "cpf").' });
+    store.startBaixa([...cpfs]);
+    setTimeout(driveBaixa, 50);
+    res.json({ started: true, cpfsNoArquivo: cpfs.size });
   } finally {
     fs.unlink(req.file.path, () => {});
   }
 }));
-app.get('/api/clientes', (req, res) => res.json(store.clientesStats()));
+app.get('/api/clientes', (req, res) => res.json({ ...store.clientesStats(), job: store.getBaixaJob() }));
 
 // --- Indica se a proteção por senha está ativa (para mostrar o botão Sair) ---
 app.get('/api/auth', (req, res) => res.json({ enabled: auth.enabled() }));
@@ -326,6 +341,15 @@ if (require.main === module) {
         }
       } catch (e) { console.error('auto-resume dedup:', e.message); }
     }, 4000);
+    // Auto-retoma a baixa de clientes se ficou pendente (reinício no meio).
+    setTimeout(() => {
+      try {
+        if (store.resumeBaixa()) {
+          console.log('LexFlow: retomando a baixa de clientes de onde parou...');
+          driveBaixa();
+        }
+      } catch (e) { console.error('auto-resume baixa:', e.message); }
+    }, 6000);
   });
   // Uploads grandes e lentos podem passar do limite padrão de 5 min do Node.
   server.requestTimeout = 60 * 60 * 1000;

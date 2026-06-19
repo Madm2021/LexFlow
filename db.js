@@ -10,6 +10,11 @@ const DB_PATH = process.env.LEXFLOW_DB || path.join(__dirname, 'data', 'lexflow.
 // Garante que a pasta do banco existe (ex.: o disco /data no Render).
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
+// Manda os arquivos temporários do SQLite (ordenações/GROUP BY/temp tables) para
+// a pasta do banco — que fica no VOLUME (disco). Sem isto, o SQLite usaria /tmp,
+// que em muitos contêineres é montado em RAM (tmpfs) e infla a memória.
+if (!process.env.SQLITE_TMPDIR) process.env.SQLITE_TMPDIR = path.dirname(DB_PATH);
+
 const db = new Database(DB_PATH);
 
 // Ajustes para rodar LEVE numa máquina com RAM limitada (~24 GB), sem travar.

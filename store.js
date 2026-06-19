@@ -59,7 +59,9 @@ let reqSeq = 0;
 const pending = new Map();
 function ensureWorker() {
   if (worker) return worker;
-  worker = new Worker(path.join(__dirname, 'facets-worker.js'));
+  // Limita o heap do worker (só faz contagens leves): evita que a thread infle
+  // a memória do processo. O trabalho pesado fica no SQLite (fora do heap V8).
+  worker = new Worker(path.join(__dirname, 'facets-worker.js'), { resourceLimits: { maxOldGenerationSizeMb: 1024 } });
   worker.on('message', (m) => {
     const p = pending.get(m.id);
     if (!p) return;

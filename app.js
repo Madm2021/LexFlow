@@ -460,8 +460,34 @@ function openImport() {
   loadImports();
   loadHygiene();
   loadDedup();
+  loadClientesCount();
 }
 function closeImport() { $('#import-modal').hidden = true; }
+
+// ===== Clientes (dar baixa por CPF) =====
+async function loadClientesCount() {
+  try {
+    const s = await api('/api/clientes');
+    const n = $('#clientes-count');
+    if (n) n.textContent = s.total ? `Atualmente ${fmt(s.total)} registro(s) em baixa.` : '';
+  } catch (e) { /* silencioso */ }
+}
+async function uploadClientes(files) {
+  if (!files || files.length === 0) return;
+  const fb = $('#clientes-feedback');
+  fb.innerHTML = '<div class="line">Lendo o arquivo e casando por CPF...</div>';
+  const form = new FormData();
+  form.append('file', files[0]);
+  try {
+    const r = await api('/api/clientes/baixa', { method: 'POST', body: form });
+    fb.innerHTML = `<div class="line ok">✓ ${fmt(r.marcados)} registro(s) marcados como cliente (baixa). ${fmt(r.cpfsNoArquivo)} CPF(s) no arquivo · ${fmt(r.totalClientes)} em baixa no total.</div>`;
+    loadClientesCount();
+    state.offset = 0;
+    await Promise.all([loadStats(), loadRecords()]);
+  } catch (e) {
+    fb.innerHTML = `<div class="line err">✕ ${e.message}</div>`;
+  }
+}
 
 async function uploadFiles(files) {
   if (!files || files.length === 0) return;
@@ -729,6 +755,8 @@ function init() {
   // Importação
   $('#dist-btn').addEventListener('click', toggleDist);
   $('#import-btn').addEventListener('click', openImport);
+  $('#clientes-btn').addEventListener('click', () => $('#clientes-input').click());
+  $('#clientes-input').addEventListener('change', (e) => { uploadClientes(e.target.files); e.target.value = ''; });
   document.querySelectorAll('[data-close-modal]').forEach((n) => n.addEventListener('click', closeImport));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeImport(); closeRecord(); closeProspect(); const cm = $('#col-panel'); if (cm) cm.hidden = true; } });
   const dz = $('#dropzone');

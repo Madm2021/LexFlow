@@ -7,6 +7,7 @@ const express = require('express');
 const multer = require('multer');
 
 const { importFilePath } = require('./importer');
+const { extractCpfs } = require('./clientes');
 const store = require('./store');
 const auth = require('./auth');
 const { db, DB_PATH } = require('./db');
@@ -133,6 +134,19 @@ app.post('/api/upload', upload.array('files'), wrap(async (req, res) => {
   }
   res.json({ imported, errors });
 }));
+
+// --- Dar baixa em clientes (contrato assinado): casa por CPF e marca/oculta ---
+app.post('/api/clientes/baixa', upload.single('file'), wrap(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+  try {
+    const cpfs = await extractCpfs(req.file.path, req.file.originalname);
+    const marcados = store.marcarClientes([...cpfs]);
+    res.json({ cpfsNoArquivo: cpfs.size, marcados, totalClientes: store.clientesStats().total });
+  } finally {
+    fs.unlink(req.file.path, () => {});
+  }
+}));
+app.get('/api/clientes', (req, res) => res.json(store.clientesStats()));
 
 // --- Indica se a proteção por senha está ativa (para mostrar o botão Sair) ---
 app.get('/api/auth', (req, res) => res.json({ enabled: auth.enabled() }));

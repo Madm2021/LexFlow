@@ -531,21 +531,25 @@ async function loadFacets() {
   const semCat = d.semCat || 0;
   const anoItems = (d.byAno || []).slice();
   if (semAno) anoItems.push({ value: 'Sem ano', n: semAno });
+  // Todas as colunas com a MESMA quantidade de linhas (a altura da coluna "Por
+  // ano"), para a leitura ficar uniforme e sem vãos vazios.
+  const linhas = Math.max(anoItems.length, 10);
+  const trim = (arr) => (arr || []).slice(0, linhas);
   panel.append(
     el('div', { class: 'dist-head' }, [
       el('div', { class: 'dist-title' }, [el('strong', { text: '📊 Distribuição' }), el('span', { class: 'meta-sub', text: ` · ${fmt(d.total)} registro(s) no recorte atual` })]),
       el('a', { href: `/api/facets.csv?${queryParams()}`, class: 'btn ghost small' }, ['⤒ Exportar contagem']),
     ]),
-    el('div', { class: 'dist-hint', text: '💡 Clique numa barra de Estado, Município ou CID para filtrar por aquele valor.' }),
     el('div', { class: 'dist-notes' }, [
-      el('span', { class: 'dist-note' }, ['🔢 ', el('strong', { text: fmt(semCat) }), ` lead(s) sem número de CAT`]),
+      el('span', { class: 'dist-note' }, ['🔢 ', el('strong', { text: fmt(semCat) }), ` sem número de CAT`]),
       semAno ? el('span', { class: 'dist-note' }, ['📅 ', el('strong', { text: fmt(semAno) }), ` sem ano identificado`]) : null,
+      el('span', { class: 'dist-note muted', text: '💡 Clique numa barra de estado, município ou CID para filtrar.' }),
     ]),
     el('div', { class: 'dist-grid' }, [
       distBars('Por ano', '📅', anoItems, d.total, null),
-      distBars('Top 10 Estados', '🗺️', d.byEstado, d.total, 'estado_funcionario'),
-      distBars('Top 10 Municípios', '🏙️', d.byMunicipio, d.total, 'municipio_funcionario'),
-      distBars('Top 10 CID-10', '🩹', d.byCid, d.total, 'cid_10'),
+      distBars('Por estado', '🗺️', trim(d.byEstado), d.total, 'estado_funcionario'),
+      distBars('Por município', '🏙️', trim(d.byMunicipio), d.total, 'municipio_funcionario'),
+      distBars('Por CID-10', '🩹', trim(d.byCid), d.total, 'cid_10'),
     ]),
   );
   annotateEstado(d.byEstado);

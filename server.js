@@ -94,14 +94,19 @@ function readFilters(req) {
 
 const validCpfParam = (req) => req.query.valid_cpf === '1';
 const excludeProspectedParam = (req) => req.query.esconder_prospectados === '1';
+const cidTierParam = (req) => {
+  const t = String(req.query.cid_tier || '').toUpperCase();
+  return (t === 'A' || t === 'B' || t === 'C') ? t : null;
+};
 
-// Recorte completo (busca + filtros + CPF válido + esconder prospectados).
+// Recorte completo (busca + filtros + CPF válido + esconder prospectados + triagem).
 function readOpts(req) {
   return {
     q: (req.query.q || '').trim(),
     filters: readFilters(req),
     validCpf: validCpfParam(req),
     excludeProspected: excludeProspectedParam(req),
+    cidTier: cidTierParam(req),
   };
 }
 
@@ -295,6 +300,8 @@ if (require.main === module) {
     console.log(`Banco de dados: ${DB_PATH}`);
     // Pré-calcula a distribuição no worker (não trava o servidor).
     setTimeout(() => { try { store.warmStart(); } catch (e) { console.error('warmStart:', e.message); } }, 2000);
+    // Constrói o índice da triagem de CID uma vez, em segundo plano (idempotente).
+    setTimeout(() => { try { store.buildCidIndex(); } catch (e) { console.error('buildCidIndex:', e.message); } }, 8000);
     // Auto-retoma o "reunir duplicados" se ficou pendente (ex.: reinício no meio):
     // continua do ponto exato salvo, sem precisar clicar de novo.
     setTimeout(() => {

@@ -67,6 +67,15 @@
         <label for="f-cid_10">CID-10</label>
         <input id="f-cid_10" data-filter="cid_10" placeholder="ex.: S62" autocomplete="off" />
       </div>
+      <div class="filter-field">
+        <label for="f-cid-tier">Potencial (sequela)</label>
+        <select id="f-cid-tier">
+          <option value="">Todos</option>
+          <option value="A">🟢 Alta</option>
+          <option value="B">🟡 Média</option>
+          <option value="C">🔴 Baixa</option>
+        </select>
+      </div>
       <label class="check-field"><input type="checkbox" id="f-valid-cpf" /> Apenas CPF válido</label>
       <label class="check-field"><input type="checkbox" id="f-hide-prospected" /> Esconder já prospectados</label>
       <button id="filter-clear" class="btn ghost small" hidden>Limpar filtros</button>

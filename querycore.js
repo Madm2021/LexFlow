@@ -5,6 +5,7 @@
 // compartilham exatamente a mesma lógica, cada um com sua conexão.
 const { COLUMNS, COLUMN_KEYS, FILTER_KEYS, FTS_FILTER_KEYS, DISTINCT_KEYS } = require('./schema');
 const { normalizeUF, variantsFor } = require('./uf');
+const { classifyCid, cidTierSql } = require('./cid');
 
 // Tokens de prefixo para o FTS5 (cada palavra vira "palavra*", com AND implícito).
 function prefixTerms(text) {
@@ -21,13 +22,20 @@ function ftsQuery(q) {
 }
 
 // Monta FROM/WHERE/params a partir de q + filtros (+ apenas CPF válido).
-function buildQuery({ q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
+function buildQuery({ q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null } = {}) {
   const where = [];
   const params = [];
   let from = 'FROM records r';
   if (validCpf) where.push('r._cpf_ok = 1');
   // "Esconder já prospectados": deixa de fora os leads já carimbados.
   if (excludeProspected) where.push('r._prospect IS NULL');
+  // Clientes com contrato assinado (baixa): NUNCA entram em nenhum recorte.
+  where.push('r._cliente IS NULL');
+  // Triagem por potencial de sequela do CID (A/B/C).
+  if (cidTier === 'A' || cidTier === 'B' || cidTier === 'C') {
+    where.push(`${cidTierSql('cid_10')} = ?`);
+    params.push(cidTier);
+  }
 
   const ftsTerms = [];
   if (q) { const fq = ftsQuery(q); if (fq) ftsTerms.push(fq); }
@@ -58,7 +66,11 @@ function buildQuery({ q = '', filters = {}, validCpf = false, excludeProspected 
     }
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const filtered = where.length > 0;
+  // "filtered" = TEM recorte do usuário (busca/filtro/triagem). O "_cliente IS
+  // NULL" é base fixa (todo mundo tem) e NÃO conta — senão a distribuição sem
+  // filtro cairia no caminho da tabela temporária (materializar a base inteira).
+  const filtered = !!(q || validCpf || excludeProspected || cidTier
+    || FILTER_KEYS.some((k) => filters[k] != null && String(filters[k]).trim() !== ''));
   return { from, whereSql, params, filtered };
 }
 
@@ -84,9 +96,9 @@ function excelCell(v) {
 }
 
 // --- Busca paginada (rápida: usa FTS/índices) ---
-function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = false, excludeProspected = false, sort = null, dir = 'asc' } = {}, total) {
+function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null, sort = null, dir = 'asc' } = {}, total) {
   const columns = COLUMNS.map((c) => ({ column_name: c.key, original_name: c.label }));
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected, cidTier });
 
   let orderBy = 'ORDER BY r._rowid ASC';
   if (sort && COLUMN_KEYS.includes(sort)) {
@@ -106,8 +118,8 @@ function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = fa
   return { columns, rows, total, limit: safeLimit, offset: safeOffset };
 }
 
-function count(db, { q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
+function count(db, { q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null } = {}) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected, cidTier });
   return db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n;
 }
 
@@ -169,15 +181,30 @@ function semCatCount(db, from, whereSql, params) {
   ).get(...params).n;
 }
 
+// Contagem por potencial de sequela do CID (A/B/C) — a triagem.
+function cidTierCounts(db, from, whereSql, params) {
+  const base = whereSql ? `${whereSql} AND ` : 'WHERE ';
+  const rows = db.prepare(
+    `SELECT ${cidTierSql('cid_10')} AS t, COUNT(*) AS n ${from} ${base}
+       cid_10 IS NOT NULL AND cid_10 <> '' GROUP BY t`,
+  ).all(...params);
+  const out = { A: 0, B: 0, C: 0 };
+  for (const r of rows) if (r.t) out[r.t] = r.n;
+  return out;
+}
+
 // As contagens em si, dado um FROM/WHERE qualquer (a tabela real OU o recorte
 // já materializado em _hits). Todas as colunas usadas têm os mesmos nomes.
 function aggregateFacets(db, from, whereSql, params) {
   const { byAno, semAno } = yearCounts(db, from, whereSql, params);
+  const byCid = topBy(db, 'cid_10', 40, from, whereSql, params);
+  byCid.forEach((it) => { it.tier = classifyCid(it.value); }); // selo 🟢🟡🔴
   return {
     total: db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n,
     byEstado: estadoCounts(db, from, whereSql, params, 27),
     byMunicipio: topBy(db, 'municipio_funcionario', 40, from, whereSql, params),
-    byCid: topBy(db, 'cid_10', 40, from, whereSql, params),
+    byCid,
+    byCidTier: cidTierCounts(db, from, whereSql, params),
     byAno,
     semAno,
     semCat: semCatCount(db, from, whereSql, params),
@@ -242,8 +269,8 @@ function computeDistinct(db, col) {
   return raw.map((r) => r.v);
 }
 
-function streamCsv(db, { q = '', filters = {}, validCpf = false, excludeProspected = false } = {}, write) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
+function streamCsv(db, { q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null } = {}, write) {
+  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected, cidTier });
   // Sem a coluna "Origem": exporta de CAT em diante, na ordem do schema.
   write(COLUMNS.map((c) => csvEscape(c.label)).join(CSV_SEP) + '\r\n');
   const selectCols = COLUMN_KEYS.map((k) => `r."${k}"`).join(', ');

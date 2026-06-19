@@ -220,6 +220,14 @@ for (const [col, type] of [['_prospect', 'INTEGER'], ['_prospect_at', 'TEXT'], [
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_prospect ON records(_prospect) WHERE _prospect IS NOT NULL');
 
+// CLIENTES com contrato assinado (baixa): marcados a partir de uma base própria,
+// ficam SEMPRE fora dos recortes (prospecção/exportação). _cliente = 1 quando é
+// cliente; _cliente_at = quando recebeu a baixa.
+for (const [col, type] of [['_cliente', 'INTEGER'], ['_cliente_at', 'TEXT']]) {
+  if (!tableColumns('records').includes(col)) db.exec(`ALTER TABLE records ADD COLUMN ${col} ${type}`);
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_cliente ON records(_cliente) WHERE _cliente IS NOT NULL');
+
 // Regiões (UF ou município) sinalizadas como "em prospecção". É o controle
 // grosso (a região toda), que convive com a marcação fina por registro acima.
 db.exec(`

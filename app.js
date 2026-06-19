@@ -2,7 +2,7 @@
 
 const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario', 'cid_10'];
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, validCpf: false, excludeProspected: false, distOpen: false, lastData: null };
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, validCpf: false, excludeProspected: false, cidTier: '', distOpen: false, lastData: null };
 
 // Agrupamento dos campos na "ficha do registro".
 const FIELD_GROUPS = [
@@ -88,9 +88,10 @@ function queryParams(extra = {}) {
   for (const k of FILTER_KEYS) if (state.filters[k]) p.set(k, state.filters[k]);
   if (state.validCpf) p.set('valid_cpf', '1');
   if (state.excludeProspected) p.set('esconder_prospectados', '1');
+  if (state.cidTier) p.set('cid_tier', state.cidTier);
   return p;
 }
-function hasFilters() { return state.validCpf || FILTER_KEYS.some((k) => state.filters[k]); }
+function hasFilters() { return state.validCpf || !!state.cidTier || FILTER_KEYS.some((k) => state.filters[k]); }
 
 async function loadStats() {
   try {
@@ -285,6 +286,15 @@ function renderChips() {
     $('#filter-clear').hidden = !hasFilters();
     state.offset = 0; loadRecords();
   }]);
+  if (state.cidTier) {
+    const nome = { A: '🟢 Alta', B: '🟡 Média', C: '🔴 Baixa' }[state.cidTier] || state.cidTier;
+    chips.push(['Potencial', nome, () => {
+      state.cidTier = '';
+      const ct = $('#f-cid-tier'); if (ct) ct.value = '';
+      $('#filter-clear').hidden = !hasFilters();
+      state.offset = 0; loadRecords();
+    }]);
+  }
   if (state.excludeProspected) chips.push(['Modo', 'Esconder já prospectados', () => {
     state.excludeProspected = false; saveHideProspected();
     const hp = $('#f-hide-prospected'); if (hp) hp.checked = false;
@@ -314,7 +324,9 @@ function clearFilters() {
   // Não mexe no modo "esconder prospectados" (é uma preferência persistente).
   state.filters = {};
   state.validCpf = false;
+  state.cidTier = '';
   const vc = $('#f-valid-cpf'); if (vc) vc.checked = false;
+  const ct = $('#f-cid-tier'); if (ct) ct.value = '';
   FILTER_KEYS.forEach((k) => { const n = $(`[data-filter="${k}"]`); if (n) n.value = ''; });
   $('#filter-clear').hidden = true;
   state.offset = 0;
@@ -513,6 +525,11 @@ function applyFacetFilter(key, value) {
   if (node) node.value = String(value);
   applyFilters();
 }
+function applyTierFilter(t) {
+  state.cidTier = t;
+  const ct = $('#f-cid-tier'); if (ct) ct.value = t;
+  applyFilters();
+}
 function distBars(title, icon, items, total, filterKey) {
   const max = items.reduce((m, x) => Math.max(m, x.n), 0) || 1;
   const rows = items.map((x) => {
@@ -520,9 +537,13 @@ function distBars(title, icon, items, total, filterKey) {
     const w = Math.max(2, (x.n / max) * 100);
     const props = { class: `dbar${filterKey ? ' clickable' : ''}` };
     if (filterKey) { props.onClick = () => applyFacetFilter(filterKey, x.value); props.title = `Filtrar por “${x.value || '—'}”`; }
+    const tierName = { A: 'alto', B: 'médio', C: 'baixo' }[x.tier];
     return el('div', props, [
       el('div', { class: 'dbar-top' }, [
-        el('span', { class: 'dbar-label', text: String(x.value || '—') }),
+        el('span', { class: 'dbar-label' }, [
+          x.tier ? el('span', { class: `tier-dot tier-${x.tier}`, title: `Potencial ${tierName} de sequela` }) : null,
+          String(x.value || '—'),
+        ]),
         el('span', { class: 'dbar-val' }, [fmt(x.n), el('em', { text: ` ${pct}%` })]),
       ]),
       el('div', { class: 'dbar-track' }, [el('span', { class: 'dbar-fill', style: 'width:0', 'data-w': String(w) })]),
@@ -558,15 +579,24 @@ async function loadFacets() {
   // ano"), para a leitura ficar uniforme e sem vãos vazios.
   const linhas = Math.max(anoItems.length, 10);
   const trim = (arr) => (arr || []).slice(0, linhas);
+  const tiers = d.byCidTier || { A: 0, B: 0, C: 0 };
+  const tierNote = (t, emoji, label) => el('span', {
+    class: `dist-note tier-note tier-${t}${state.cidTier === t ? ' on' : ''}`,
+    title: `Filtrar pelos casos de potencial ${label.toLowerCase()}`,
+    onClick: () => applyTierFilter(state.cidTier === t ? '' : t),
+  }, [`${emoji} ${label}: `, el('strong', { text: fmt(tiers[t]) })]);
   panel.append(
     el('div', { class: 'dist-head' }, [
       el('div', { class: 'dist-title' }, [el('strong', { text: '📊 Distribuição' }), el('span', { class: 'meta-sub', text: ` · ${fmt(d.total)} registro(s) no recorte atual` })]),
       el('a', { href: `/api/facets.csv?${queryParams()}`, class: 'btn ghost small' }, ['⤒ Exportar contagem']),
     ]),
     el('div', { class: 'dist-notes' }, [
-      el('span', { class: 'dist-note' }, ['🔢 ', el('strong', { text: fmt(semCat) }), ` sem número de CAT`]),
-      semAno ? el('span', { class: 'dist-note' }, ['📅 ', el('strong', { text: fmt(semAno) }), ` sem ano identificado`]) : null,
-      el('span', { class: 'dist-note muted', text: '💡 Clique numa barra de estado, município ou CID para filtrar.' }),
+      el('span', { class: 'dist-note muted', text: 'Potencial de sequela:' }),
+      tierNote('A', '🟢', 'Alta'),
+      tierNote('B', '🟡', 'Média'),
+      tierNote('C', '🔴', 'Baixa'),
+      el('span', { class: 'dist-note' }, ['🔢 ', el('strong', { text: fmt(semCat) }), ` sem CAT`]),
+      semAno ? el('span', { class: 'dist-note' }, ['📅 ', el('strong', { text: fmt(semAno) }), ` sem ano`]) : null,
     ]),
     el('div', { class: 'dist-grid' }, [
       distBars('Por ano', '📅', anoItems, d.total, null),
@@ -678,6 +708,7 @@ function init() {
   $('#f-valid-cpf').addEventListener('change', (e) => { state.validCpf = e.target.checked; $('#filter-clear').hidden = !hasFilters(); state.offset = 0; loadRecords(); });
   $('#f-hide-prospected').checked = state.excludeProspected;
   $('#f-hide-prospected').addEventListener('change', (e) => { state.excludeProspected = e.target.checked; saveHideProspected(); state.offset = 0; loadRecords(); });
+  $('#f-cid-tier').addEventListener('change', (e) => { state.cidTier = e.target.value; applyFilters(); });
   $('#hygiene-btn').addEventListener('click', startHygiene);
   $('#dedup-btn').addEventListener('click', startDedup);
 

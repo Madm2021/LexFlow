@@ -6,6 +6,7 @@ const { db } = require('./db');
 const { COLUMNS, COLUMN_KEYS, FILTER_KEYS, FTS_FILTER_KEYS, ALL_FILTER_KEYS, DISTINCT_KEYS } = require('./schema');
 const core = require('./querycore');
 const { normalizeCpf, normalizeDate, recordKey } = require('./hygiene');
+const { cidTierSql } = require('./cid');
 
 // ---------------------------------------------------------------------------
 // Caches: memória (por versão dos dados) + persistente em app_cache (sobrevive
@@ -40,7 +41,7 @@ function bumpData() {
 // Invalida os caches persistentes (distribuição/dropdowns) quando a LÓGICA muda
 // — ex.: trocar o Top N da distribuição. Sem isto, o cache antigo continua sendo
 // servido após o deploy. Suba o número quando mudar facetas/distinct.
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 (function ensureCacheVersion() {
   try {
     if (getPersist('flag:cache_version') !== CACHE_VERSION) {
@@ -215,8 +216,8 @@ function getStats() {
   }));
 }
 
-function isUnfiltered({ q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
-  return !q && !validCpf && !excludeProspected
+function isUnfiltered({ q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null } = {}) {
+  return !q && !validCpf && !excludeProspected && !cidTier
     && !ALL_FILTER_KEYS.some((k) => filters[k] != null && String(filters[k]).trim() !== '');
 }
 
@@ -237,8 +238,8 @@ function streamCsv(opts, write) {
 // ---------------------------------------------------------------------------
 let facetsAllInflight = null;
 
-async function facets({ q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
-  if (isUnfiltered({ q, filters, validCpf, excludeProspected })) {
+async function facets({ q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null } = {}) {
+  if (isUnfiltered({ q, filters, validCpf, excludeProspected, cidTier })) {
     const p = getPersist('facets_all');
     if (p) return p;
     if (facetsAllInflight) return facetsAllInflight;
@@ -247,9 +248,9 @@ async function facets({ q = '', filters = {}, validCpf = false, excludeProspecte
       .catch((e) => { facetsAllInflight = null; throw e; });
     return facetsAllInflight;
   }
-  const key = `facets:${JSON.stringify({ q, filters, validCpf, excludeProspected })}`;
+  const key = `facets:${JSON.stringify({ q, filters, validCpf, excludeProspected, cidTier })}`;
   if (memo[key] && memo[key].v === dataVersion) return memo[key].value;
-  const r = await ask('facets', { q, filters, validCpf, excludeProspected });
+  const r = await ask('facets', { q, filters, validCpf, excludeProspected, cidTier });
   memo[key] = { v: dataVersion, value: r };
   return r;
 }
@@ -540,6 +541,13 @@ function prospectStats() {
   return { totalMarcados, regioes: listRegioes() };
 }
 
+// Índice por EXPRESSÃO para a triagem de CID (mesma régua do cid.js). Construído
+// uma vez, em segundo plano (não trava o boot), e idempotente (IF NOT EXISTS).
+function buildCidIndex() {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_cid_tier ON records (${cidTierSql('cid_10')})`);
+  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
+}
+
 // ---------------------------------------------------------------------------
 // Histórico e remoção.
 // ---------------------------------------------------------------------------
@@ -592,6 +600,7 @@ module.exports = {
   addRegiao,
   removeRegiao,
   prospectStats,
+  buildCidIndex,
   listImports,
   deleteBySource,
   clearAll,

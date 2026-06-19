@@ -169,8 +169,9 @@ function semCatCount(db, from, whereSql, params) {
   ).get(...params).n;
 }
 
-function computeFacets(db, { q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
+// As contagens em si, dado um FROM/WHERE qualquer (a tabela real OU o recorte
+// já materializado em _hits). Todas as colunas usadas têm os mesmos nomes.
+function aggregateFacets(db, from, whereSql, params) {
   const { byAno, semAno } = yearCounts(db, from, whereSql, params);
   return {
     total: db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n,
@@ -183,8 +184,7 @@ function computeFacets(db, { q = '', filters = {}, validCpf = false, excludePros
   };
 }
 
-function computeFacetsCsv(db, { q = '', filters = {}, validCpf = false, excludeProspected = false } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected });
+function aggregateFacetsCsv(db, from, whereSql, params) {
   const lines = [['Dimensão', 'Valor', 'Quantidade'].join(CSV_SEP)];
   const push = (label, rows) => rows.forEach((r) => lines.push([label, csvEscape(r.value), r.n].join(CSV_SEP)));
   const { byAno, semAno } = yearCounts(db, from, whereSql, params);
@@ -195,6 +195,36 @@ function computeFacetsCsv(db, { q = '', filters = {}, validCpf = false, excludeP
   push('Município', topBy(db, 'municipio_funcionario', 1000, from, whereSql, params));
   push('CID-10', topBy(db, 'cid_10', 1000, from, whereSql, params));
   return lines.join('\r\n');
+}
+
+// Só as colunas que a distribuição usa — para a tabela temporária do recorte.
+const HITS_COLS = `r.estado_funcionario AS estado_funcionario,
+  r.municipio_funcionario AS municipio_funcionario, r.cid_10 AS cid_10,
+  r.cat AS cat, r.data_atend AS data_atend`;
+
+// PORQUÊ: num recorte filtrado/busca, cada contagem faria FTS/índice + buscar a
+// linha por rowid na tabela gigante (vários GB). Eram 6 dessas passadas — em
+// milhões de linhas, leituras aleatórias demais → 502. Aqui materializamos o
+// recorte UMA vez (só as 5 colunas usadas) numa tabela temporária e agregamos em
+// cima dela: 1 passada na base + varreduras sequenciais baratas. TEMP funciona
+// mesmo na conexão somente-leitura do worker (vai para o armazenamento temp).
+function withHits(db, from, whereSql, params, fn) {
+  db.exec('DROP TABLE IF EXISTS _hits');
+  db.prepare(`CREATE TEMP TABLE _hits AS SELECT ${HITS_COLS} ${from} ${whereSql}`).run(...params);
+  try { return fn('FROM _hits r', '', []); }
+  finally { db.exec('DROP TABLE IF EXISTS _hits'); }
+}
+
+function computeFacets(db, opts = {}) {
+  const { from, whereSql, params, filtered } = buildQuery(opts);
+  if (!filtered) return aggregateFacets(db, from, whereSql, params);
+  return withHits(db, from, whereSql, params, (f, w, p) => aggregateFacets(db, f, w, p));
+}
+
+function computeFacetsCsv(db, opts = {}) {
+  const { from, whereSql, params, filtered } = buildQuery(opts);
+  if (!filtered) return aggregateFacetsCsv(db, from, whereSql, params);
+  return withHits(db, from, whereSql, params, (f, w, p) => aggregateFacetsCsv(db, f, w, p));
 }
 
 function computeDistinct(db, col) {

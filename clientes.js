@@ -20,18 +20,40 @@ function cpfFromCell(v) {
   return isValidCPF(padded) ? padded : null;
 }
 
+// Acha a coluna do CPF no cabeçalho (sem acento/maiúsculas). Prefere o título
+// exatamente "cpf"; senão, o primeiro que CONTÉM "cpf". Retorna o índice ou -1.
+// Isso evita pegar CPFs falsos de colunas de telefone/id que passam no dígito.
+function findCpfColumn(header) {
+  const norm = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  const cols = header.map(norm);
+  let i = cols.indexOf('cpf');
+  if (i < 0) i = cols.findIndex((c) => c.includes('cpf'));
+  return i;
+}
+
 async function fromXlsx(filePath, set) {
   const reader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
     sharedStrings: 'cache', hyperlinks: 'ignore', styles: 'ignore', worksheets: 'emit',
   });
   for await (const ws of reader) {
+    let cpfIdx = null; // null = ainda não leu cabeçalho
     for await (const row of ws) {
+      const cells = [];
       const raw = row.values;
-      for (let c = 1; c < raw.length; c += 1) {
-        const cpf = cpfFromCell(cellToValue(raw[c]));
-        if (cpf) set.add(cpf);
-      }
+      for (let c = 1; c < raw.length; c += 1) cells[c - 1] = cellToValue(raw[c]);
+      if (cpfIdx === null) { cpfIdx = findCpfColumn(cells); continue; } // pula o cabeçalho
+      addRowCpfs(cells, cpfIdx, set);
     }
+  }
+}
+
+// Se achou a coluna do CPF, usa só ela (preciso). Senão, varre todas as células.
+function addRowCpfs(cells, cpfIdx, set) {
+  if (cpfIdx >= 0) {
+    const cpf = cpfFromCell(cells[cpfIdx]);
+    if (cpf) set.add(cpf);
+  } else {
+    for (const cell of cells) { const cpf = cpfFromCell(cell); if (cpf) set.add(cpf); }
   }
 }
 
@@ -57,11 +79,13 @@ function fromCsv(filePath, set) {
       bom: true, delimiter: detectDelimiter(filePath), skip_empty_lines: true,
       relax_column_count: true, relax_quotes: true, trim: true,
     });
+    let cpfIdx = null; // null = ainda não leu o cabeçalho
     parser.on('readable', () => {
       let rec;
       // eslint-disable-next-line no-cond-assign
       while ((rec = parser.read()) !== null) {
-        for (const cell of rec) { const cpf = cpfFromCell(cell); if (cpf) set.add(cpf); }
+        if (cpfIdx === null) { cpfIdx = findCpfColumn(rec); continue; }
+        addRowCpfs(rec, cpfIdx, set);
       }
     });
     parser.on('error', reject);

@@ -147,19 +147,20 @@ main { width: 100%; margin: 0; padding: 26px clamp(14px, 2.5vw, 48px) 70px; }
 .dist-notes { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 14px; }
 .dist-note { font-size: 12.5px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; }
 .dist-note strong { color: var(--accent); font-variant-numeric: tabular-nums; }
-.dist-col { background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; }
-.dist-col h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.dist-note.muted { background: transparent; border-color: transparent; padding-left: 2px; }
+.dist-col { background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+.dist-col h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; padding-bottom: 9px; border-bottom: 1px solid var(--border); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
 .dist-ico { font-size: 15px; }
 
-.dbar { padding: 7px 9px; border-radius: 10px; transition: background .12s; }
+.dbar { padding: 5px 8px; border-radius: 9px; transition: background .12s; }
 .dbar.clickable { cursor: pointer; }
 .dbar.clickable:hover { background: var(--surface-hover); }
 .dbar.clickable:hover .dbar-fill { filter: brightness(1.12); }
-.dbar-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; font-size: 13px; }
+.dbar-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: 12.5px; }
 .dbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.dbar-val { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 12.5px; }
+.dbar-val { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 12px; }
 .dbar-val em { color: var(--accent); font-style: normal; font-weight: 700; margin-left: 6px; }
-.dbar-track { height: 9px; background: var(--bg); border-radius: 6px; overflow: hidden; }
+.dbar-track { height: 7px; background: var(--bg); border-radius: 6px; overflow: hidden; }
 .dbar-fill { display: block; height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent), var(--accent-strong)); transition: width .55s cubic-bezier(.2, .7, .2, 1); }
 @media (max-width: 560px) { .dist-grid { grid-template-columns: 1fr; gap: 12px; } }
 

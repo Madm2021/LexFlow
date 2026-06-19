@@ -174,9 +174,9 @@ function computeFacets(db, { q = '', filters = {}, validCpf = false, excludePros
   const { byAno, semAno } = yearCounts(db, from, whereSql, params);
   return {
     total: db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n,
-    byEstado: estadoCounts(db, from, whereSql, params, 10),
-    byMunicipio: topBy(db, 'municipio_funcionario', 10, from, whereSql, params),
-    byCid: topBy(db, 'cid_10', 10, from, whereSql, params),
+    byEstado: estadoCounts(db, from, whereSql, params, 27),
+    byMunicipio: topBy(db, 'municipio_funcionario', 40, from, whereSql, params),
+    byCid: topBy(db, 'cid_10', 40, from, whereSql, params),
     byAno,
     semAno,
     semCat: semCatCount(db, from, whereSql, params),

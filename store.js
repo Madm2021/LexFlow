@@ -37,6 +37,19 @@ function bumpData() {
   try { db.prepare("DELETE FROM app_cache WHERE key NOT LIKE 'flag:%'").run(); } catch (e) { /* ignora */ }
 }
 
+// Invalida os caches persistentes (distribuição/dropdowns) quando a LÓGICA muda
+// — ex.: trocar o Top N da distribuição. Sem isto, o cache antigo continua sendo
+// servido após o deploy. Suba o número quando mudar facetas/distinct.
+const CACHE_VERSION = 2;
+(function ensureCacheVersion() {
+  try {
+    if (getPersist('flag:cache_version') !== CACHE_VERSION) {
+      db.prepare("DELETE FROM app_cache WHERE key NOT LIKE 'flag:%'").run();
+      setPersist('flag:cache_version', CACHE_VERSION);
+    }
+  } catch (e) { /* ignora */ }
+}());
+
 // ---------------------------------------------------------------------------
 // Worker de contagem (thread separada): não trava o servidor principal.
 // ---------------------------------------------------------------------------

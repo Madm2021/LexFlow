@@ -131,9 +131,9 @@ function computeFacets(db, { q = '', filters = {}, validCpf = false } = {}) {
   const { from, whereSql, params } = buildQuery({ q, filters, validCpf });
   return {
     total: db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n,
-    byEstado: estadoCounts(db, from, whereSql, params, 40),
-    byMunicipio: topBy(db, 'municipio_funcionario', 12, from, whereSql, params),
-    byCid: topBy(db, 'cid_10', 12, from, whereSql, params),
+    byEstado: estadoCounts(db, from, whereSql, params, 10),
+    byMunicipio: topBy(db, 'municipio_funcionario', 10, from, whereSql, params),
+    byCid: topBy(db, 'cid_10', 10, from, whereSql, params),
   };
 }
 

@@ -525,9 +525,9 @@ async function loadFacets() {
     ]),
     el('div', { class: 'dist-hint', text: '💡 Clique numa barra para filtrar por aquele valor.' }),
     el('div', { class: 'dist-grid' }, [
-      distBars('Por Estado', '🗺️', d.byEstado, d.total, 'estado_funcionario'),
-      distBars('Top Municípios', '🏙️', d.byMunicipio, d.total, 'municipio_funcionario'),
-      distBars('Top CID-10', '🩹', d.byCid, d.total, 'cid_10'),
+      distBars('Top 10 Estados', '🗺️', d.byEstado, d.total, 'estado_funcionario'),
+      distBars('Top 10 Municípios', '🏙️', d.byMunicipio, d.total, 'municipio_funcionario'),
+      distBars('Top 10 CID-10', '🩹', d.byCid, d.total, 'cid_10'),
     ]),
   );
   annotateEstado(d.byEstado);

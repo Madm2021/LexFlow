@@ -26,6 +26,15 @@ const PAGE_SIZES = [50, 100, 200, 500];
 }());
 function savePageSize() { try { localStorage.setItem('lexflow-page-size', String(state.limit)); } catch (e) { /* ignora */ } }
 
+// "Esconder já prospectados": LIGADO por padrão. Vale para a lista, a
+// distribuição e a EXPORTAÇÃO — assim, por padrão, não se puxa de novo quem já
+// está em prospecção. O usuário pode desligar para ver/baixar tudo.
+(function loadHideProspected() {
+  const v = localStorage.getItem('lexflow-hide-prospected');
+  state.excludeProspected = v === null ? true : v === '1';
+}());
+function saveHideProspected() { try { localStorage.setItem('lexflow-hide-prospected', state.excludeProspected ? '1' : '0'); } catch (e) { /* ignora */ } }
+
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
   const node = document.createElement(tag);
@@ -81,7 +90,7 @@ function queryParams(extra = {}) {
   if (state.excludeProspected) p.set('esconder_prospectados', '1');
   return p;
 }
-function hasFilters() { return state.validCpf || state.excludeProspected || FILTER_KEYS.some((k) => state.filters[k]); }
+function hasFilters() { return state.validCpf || FILTER_KEYS.some((k) => state.filters[k]); }
 
 async function loadStats() {
   try {
@@ -119,7 +128,11 @@ function highlightInto(node, text) {
 async function loadRecords() {
   const params = queryParams({ limit: state.limit, offset: state.offset, dir: state.dir });
   if (state.sort) params.set('sort', state.sort);
-  $('#export-link').href = `/api/export.csv?${queryParams()}`;
+  const exLink = $('#export-link');
+  exLink.href = `/api/export.csv?${queryParams()}`;
+  exLink.title = state.excludeProspected
+    ? 'Baixa só os NÃO prospectados (modo padrão). Desmarque “Esconder já prospectados” para baixar tudo.'
+    : 'Baixa TUDO do recorte, inclusive os já prospectados.';
   let data;
   try {
     data = await api(`/api/records?${params}`);
@@ -272,10 +285,9 @@ function renderChips() {
     $('#filter-clear').hidden = !hasFilters();
     state.offset = 0; loadRecords();
   }]);
-  if (state.excludeProspected) chips.push(['Filtro', 'Esconder já prospectados', () => {
-    state.excludeProspected = false;
+  if (state.excludeProspected) chips.push(['Modo', 'Esconder já prospectados', () => {
+    state.excludeProspected = false; saveHideProspected();
     const hp = $('#f-hide-prospected'); if (hp) hp.checked = false;
-    $('#filter-clear').hidden = !hasFilters();
     state.offset = 0; loadRecords();
   }]);
   if (chips.length === 0) { box.hidden = true; return; }
@@ -299,11 +311,10 @@ function applyFilters() {
   loadRecords();
 }
 function clearFilters() {
+  // Não mexe no modo "esconder prospectados" (é uma preferência persistente).
   state.filters = {};
   state.validCpf = false;
-  state.excludeProspected = false;
   const vc = $('#f-valid-cpf'); if (vc) vc.checked = false;
-  const hp = $('#f-hide-prospected'); if (hp) hp.checked = false;
   FILTER_KEYS.forEach((k) => { const n = $(`[data-filter="${k}"]`); if (n) n.value = ''; });
   $('#filter-clear').hidden = true;
   state.offset = 0;
@@ -665,7 +676,8 @@ function init() {
   });
   $('#filter-clear').addEventListener('click', clearFilters);
   $('#f-valid-cpf').addEventListener('change', (e) => { state.validCpf = e.target.checked; $('#filter-clear').hidden = !hasFilters(); state.offset = 0; loadRecords(); });
-  $('#f-hide-prospected').addEventListener('change', (e) => { state.excludeProspected = e.target.checked; $('#filter-clear').hidden = !hasFilters(); state.offset = 0; loadRecords(); });
+  $('#f-hide-prospected').checked = state.excludeProspected;
+  $('#f-hide-prospected').addEventListener('change', (e) => { state.excludeProspected = e.target.checked; saveHideProspected(); state.offset = 0; loadRecords(); });
   $('#hygiene-btn').addEventListener('click', startHygiene);
   $('#dedup-btn').addEventListener('click', startDedup);
 

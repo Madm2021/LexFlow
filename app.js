@@ -2,7 +2,21 @@
 
 const FILTER_KEYS = ['estado_funcionario', 'municipio_funcionario', 'cid_10'];
 
-const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, validCpf: false, distOpen: false };
+const state = { limit: 50, offset: 0, q: '', sort: null, dir: 'asc', filters: {}, validCpf: false, distOpen: false, lastData: null };
+
+// Agrupamento dos campos na "ficha do registro".
+const FIELD_GROUPS = [
+  { title: '👤 Dados pessoais', keys: ['nome', 'cpf', 'data_nascimento', 'nome_mae', 'sexo', 'identidade', 'ctps', 'remuneracao', 'cbo'] },
+  { title: '📞 Contato', keys: ['telefone_funcionario', 'telefone1', 'telefone2', 'telefone3', 'email'] },
+  { title: '📍 Endereço', keys: ['endereco_funcionario', 'bairro_funcionario', 'municipio_funcionario', 'estado_funcionario', 'cep_funcionario'] },
+  { title: '🩹 Acidente / CID', keys: ['cat', 'data_atend', 'local_acidente', 'parte_corpo', 'agente_causador', 'nat_lesao', 'cid_10', 'sit_gerador', 'unidade', 'observacoes'] },
+];
+
+let allColumns = null;       // catálogo completo de colunas (para o seletor)
+let colLabels = {};          // chave -> rótulo amigável
+function loadHiddenCols() { try { return new Set(JSON.parse(localStorage.getItem('lexflow-hidden-cols') || '[]')); } catch (e) { return new Set(); } }
+function saveHiddenCols() { try { localStorage.setItem('lexflow-hidden-cols', JSON.stringify([...hiddenCols])); } catch (e) { /* ignora */ } }
+const hiddenCols = loadHiddenCols();
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, props = {}, children = []) => {
@@ -66,24 +80,64 @@ async function loadStats() {
     $('#stat-records').textContent = fmt(s.records);
     $('#stat-imports').textContent = fmt(s.imports);
   } catch (e) { /* silencioso */ }
+  try {
+    const h = await api('/api/hygiene');
+    const node = $('#stat-validcpf');
+    if (node) node.textContent = fmt(h.valid || 0);
+  } catch (e) { /* silencioso */ }
+}
+
+// Destaca o termo buscado dentro de uma célula (sem risco de HTML injetado).
+function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function highlightInto(node, text) {
+  const q = (state.q || '').trim();
+  const terms = q ? q.split(/\s+/).filter((t) => t.length >= 2).map(escapeRegExp) : [];
+  if (!terms.length) { node.textContent = text; return; }
+  const re = new RegExp(`(${terms.join('|')})`, 'gi');
+  let last = 0; let m; let any = false;
+  while ((m = re.exec(text)) !== null) {
+    any = true;
+    if (m.index > last) node.appendChild(document.createTextNode(text.slice(last, m.index)));
+    node.appendChild(el('mark', {}, [m[0]]));
+    last = m.index + m[0].length;
+    if (m.index === re.lastIndex) re.lastIndex += 1;
+  }
+  if (!any) { node.textContent = text; return; }
+  if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
 }
 
 // ===== Lista de registros =====
 async function loadRecords() {
-  const viewer = $('#viewer');
-  const meta = $('#results-meta');
   const params = queryParams({ limit: state.limit, offset: state.offset, dir: state.dir });
   if (state.sort) params.set('sort', state.sort);
   $('#export-link').href = `/api/export.csv?${queryParams()}`;
-
   let data;
   try {
     data = await api(`/api/records?${params}`);
-  } catch (e) { viewer.innerHTML = `<div class="empty-state"><p>${e.message}</p></div>`; return; }
+  } catch (e) { $('#viewer').innerHTML = `<div class="empty-state"><p>${e.message}</p></div>`; return; }
+  renderResults(data);
+}
 
+// Sort no cabeçalho.
+function sortBy(col) {
+  if (state.sort === col) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+  else { state.sort = col; state.dir = 'asc'; }
+  state.offset = 0;
+  loadRecords();
+}
+
+function renderResults(data) {
+  if (!data) return;
+  state.lastData = data;
+  const viewer = $('#viewer');
+  const meta = $('#results-meta');
   const { columns, rows, total, limit, offset } = data;
-  const filtered = state.q || hasFilters();
+  allColumns = columns;
+  colLabels = {};
+  columns.forEach((c) => { colLabels[c.column_name] = c.original_name; });
+  renderChips();
 
+  const filtered = state.q || hasFilters();
   if (total === 0) {
     meta.textContent = '';
     viewer.innerHTML = filtered
@@ -96,27 +150,26 @@ async function loadRecords() {
   meta.innerHTML = `<span class="big-total">${fmt(total)}</span> <span class="meta-sub">registro(s)${ctx}${hasFilters() ? ' (filtrado)' : ''}</span>`;
   if (state.distOpen) loadFacets();
 
-  const headerCells = columns;
-  const thead = el('thead', {}, [el('tr', {}, headerCells.map((c) => {
+  let visible = columns.filter((c) => !hiddenCols.has(c.column_name));
+  if (visible.length === 0) visible = columns; // nunca esconde tudo
+
+  const thead = el('thead', {}, [el('tr', {}, visible.map((c, i) => {
     const arrow = state.sort === c.column_name ? (state.dir === 'asc' ? ' ▲' : ' ▼') : '';
     return el('th', {
+      class: i === 0 ? 'sticky-col' : '',
       title: 'Clique para ordenar',
-      onClick: () => {
-        if (state.sort === c.column_name) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
-        else { state.sort = c.column_name; state.dir = 'asc'; }
-        state.offset = 0;
-        loadRecords();
-      },
+      onClick: () => sortBy(c.column_name),
     }, [c.original_name + arrow]);
   }))]);
 
-  const tbody = el('tbody', {}, rows.map((row) => el('tr', {}, headerCells.map((c) => {
+  const tbody = el('tbody', {}, rows.map((row) => el('tr', {
+    class: 'rowclick', title: 'Ver ficha completa', onClick: () => openRecord(row),
+  }, visible.map((c, i) => {
     const v = row[c.column_name];
-    let cls = '';
-    if (c.column_name === 'cpf') cls = 'cpf';
-    const td = el('td', { class: cls });
+    const cls = `${c.column_name === 'cpf' ? 'cpf ' : ''}${i === 0 ? 'sticky-col' : ''}`.trim();
+    const td = el('td', { 'data-label': c.original_name, class: cls });
     if (v == null || v === '') td.appendChild(el('span', { class: 'null', text: '—' }));
-    else td.textContent = String(v);
+    else highlightInto(td, String(v));
     return td;
   }))));
 
@@ -134,6 +187,85 @@ async function loadRecords() {
 
   viewer.innerHTML = '';
   viewer.append(table, pager);
+}
+
+// ===== Ficha do registro (clique na linha) =====
+function openRecord(row) {
+  $('#record-title').textContent = row.nome || row.cpf || 'Registro';
+  const body = $('#record-body');
+  body.innerHTML = '';
+  let any = false;
+  FIELD_GROUPS.forEach((g) => {
+    const fields = g.keys.filter((k) => row[k] != null && row[k] !== '');
+    if (fields.length === 0) return;
+    any = true;
+    const grid = el('div', { class: 'ficha-grid' }, fields.map((k) => el('div', { class: 'ficha-field' }, [
+      el('span', { class: 'ficha-label', text: colLabels[k] || k }),
+      el('span', { class: k === 'cpf' ? 'ficha-value cpf' : 'ficha-value', text: String(row[k]) }),
+    ])));
+    body.append(el('div', { class: 'ficha-group' }, [el('h3', { class: 'ficha-gtitle', text: g.title }), grid]));
+  });
+  if (!any) body.appendChild(el('div', { class: 'spinner', text: 'Sem dados preenchidos neste registro.' }));
+  $('#record-modal').hidden = false;
+}
+function closeRecord() { $('#record-modal').hidden = true; }
+
+// ===== Seletor de colunas =====
+function toggleColMenu() {
+  const p = $('#col-panel');
+  if (p.hidden) buildColMenu();
+  p.hidden = !p.hidden;
+}
+function buildColMenu() {
+  const p = $('#col-panel');
+  p.innerHTML = '';
+  if (!allColumns) { p.appendChild(el('div', { class: 'spinner', text: '—' })); return; }
+  p.appendChild(el('div', { class: 'col-panel-head' }, [
+    el('strong', { text: 'Mostrar colunas' }),
+    el('button', { class: 'btn ghost small', text: 'Todas', onClick: () => { hiddenCols.clear(); saveHiddenCols(); buildColMenu(); renderResults(state.lastData); } }),
+  ]));
+  allColumns.forEach((c) => {
+    const cb = el('input', { type: 'checkbox' });
+    cb.checked = !hiddenCols.has(c.column_name);
+    cb.addEventListener('change', () => {
+      if (cb.checked) hiddenCols.delete(c.column_name); else hiddenCols.add(c.column_name);
+      saveHiddenCols();
+      renderResults(state.lastData);
+    });
+    p.appendChild(el('label', { class: 'col-item' }, [cb, ` ${c.original_name}`]));
+  });
+}
+
+// ===== Etiquetas (chips) dos filtros ativos =====
+function renderChips() {
+  const box = $('#filter-chips');
+  if (!box) return;
+  box.innerHTML = '';
+  const chips = [];
+  if (state.q) chips.push(['Busca', state.q, () => { $('#search').value = ''; state.q = ''; $('#search-clear').hidden = true; state.offset = 0; loadRecords(); }]);
+  const labels = { estado_funcionario: 'Estado', municipio_funcionario: 'Município', cid_10: 'CID-10' };
+  FILTER_KEYS.forEach((k) => {
+    if (!state.filters[k]) return;
+    chips.push([labels[k], state.filters[k], () => {
+      delete state.filters[k];
+      const n = $(`[data-filter="${k}"]`); if (n) n.value = '';
+      $('#filter-clear').hidden = !hasFilters();
+      state.offset = 0; loadRecords();
+    }]);
+  });
+  if (state.validCpf) chips.push(['Filtro', 'Apenas CPF válido', () => {
+    state.validCpf = false;
+    const vc = $('#f-valid-cpf'); if (vc) vc.checked = false;
+    $('#filter-clear').hidden = !hasFilters();
+    state.offset = 0; loadRecords();
+  }]);
+  if (chips.length === 0) { box.hidden = true; return; }
+  box.hidden = false;
+  chips.forEach(([k, v, onRemove]) => box.appendChild(el('span', { class: 'chip' }, [
+    el('span', { class: 'chip-k', text: `${k}: ` }),
+    el('span', { class: 'chip-v', text: v }),
+    el('button', { class: 'chip-x', title: 'Remover', onClick: onRemove }, ['×']),
+  ])));
 }
 
 // ===== Filtros =====
@@ -414,11 +546,19 @@ function init() {
   $('#hygiene-btn').addEventListener('click', startHygiene);
   $('#dedup-btn').addEventListener('click', startDedup);
 
+  // Seletor de colunas + ficha do registro
+  $('#col-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleColMenu(); });
+  document.querySelectorAll('[data-close-record]').forEach((n) => n.addEventListener('click', closeRecord));
+  document.addEventListener('click', (e) => {
+    const cm = $('#col-panel');
+    if (cm && !cm.hidden && !e.target.closest('.colmenu')) cm.hidden = true;
+  });
+
   // Importação
   $('#dist-btn').addEventListener('click', toggleDist);
   $('#import-btn').addEventListener('click', openImport);
   document.querySelectorAll('[data-close-modal]').forEach((n) => n.addEventListener('click', closeImport));
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeImport(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeImport(); closeRecord(); const cm = $('#col-panel'); if (cm) cm.hidden = true; } });
   const dz = $('#dropzone');
   const input = $('#file-input');
   dz.addEventListener('click', () => input.click());

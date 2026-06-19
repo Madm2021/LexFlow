@@ -17,11 +17,6 @@
     </div>
 
     <div class="top-actions">
-      <div class="counters">
-        <span><strong id="stat-records">0</strong> registros</span>
-        <span class="sep">·</span>
-        <span><strong id="stat-imports">0</strong> planilhas</span>
-      </div>
       <button id="theme-toggle" class="icon-btn" title="Alternar tema claro/escuro" aria-label="Alternar tema">🌙</button>
       <button id="dist-btn" class="btn ghost">📊 Distribuição</button>
       <button id="import-btn" class="btn ghost">⤓ Importar</button>
@@ -39,6 +34,22 @@
         <button id="search-clear" class="clear-x" title="Limpar busca" hidden>×</button>
       </div>
       <button id="search-btn" class="btn primary">Buscar</button>
+    </section>
+
+    <!-- Números-chave (cartões) -->
+    <section class="stats-strip" id="stats-strip">
+      <div class="stat-card">
+        <span class="stat-num" id="stat-records">—</span>
+        <span class="stat-label">registros</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-num" id="stat-imports">—</span>
+        <span class="stat-label">planilhas</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-num ok" id="stat-validcpf">—</span>
+        <span class="stat-label">com CPF válido</span>
+      </div>
     </section>
 
     <!-- Filtros por coluna -->
@@ -59,12 +70,23 @@
       <button id="filter-clear" class="btn ghost small" hidden>Limpar filtros</button>
     </section>
 
+    <!-- Etiquetas dos filtros ativos -->
+    <section class="filter-chips" id="filter-chips" hidden></section>
+
     <!-- Painel de distribuição (quantidades por valor) -->
     <section id="dist-panel" class="dist-panel" hidden></section>
 
     <!-- Resultados -->
     <section class="results">
-      <div id="results-meta" class="results-meta"></div>
+      <div class="results-toolbar">
+        <div id="results-meta" class="results-meta"></div>
+        <div class="results-tools">
+          <div class="colmenu">
+            <button id="col-btn" class="btn ghost small" title="Escolher colunas">⚙ Colunas</button>
+            <div id="col-panel" class="col-panel" hidden></div>
+          </div>
+        </div>
+      </div>
       <div id="viewer">
         <div class="empty-state" id="empty-state">
           <p>Use a busca acima ou os filtros para consultar a base. Para adicionar dados, clique em <strong>⤓ Importar</strong>.</p>
@@ -72,6 +94,18 @@
       </div>
     </section>
   </main>
+
+  <!-- Modal: ficha do registro -->
+  <div id="record-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-record></div>
+    <div class="modal-card record-card">
+      <div class="modal-head">
+        <h2 id="record-title">Ficha do registro</h2>
+        <button class="icon-btn" data-close-record title="Fechar">×</button>
+      </div>
+      <div id="record-body" class="record-body"></div>
+    </div>
+  </div>
 
   <!-- Modal de importação -->
   <div id="import-modal" class="modal" hidden>

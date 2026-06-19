@@ -183,6 +183,11 @@ for (const k of FILTER_KEYS) {
   }
 }
 
+// Índice da CID-10: acelera a contagem por CID na Distribuição (GROUP BY), que
+// antes varria a tabela inteira. COLLATE NOCASE casa com o GROUP BY usado.
+// (Criado uma vez; em bases grandes a 1ª subida pode levar alguns segundos.)
+db.exec('CREATE INDEX IF NOT EXISTS idx_cid_10 ON records("cid_10" COLLATE NOCASE)');
+
 // Higienização: _cpf_ok marca a validade do CPF (1 válido, 0 inválido, NULL =
 // ainda não processado). Índice parcial só sobre os já processados (fica vazio
 // e instantâneo até a higienização rodar) — acelera o filtro "Apenas CPF válido".

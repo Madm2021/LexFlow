@@ -158,6 +158,17 @@
         <div id="dedup-progress" class="maint-progress" hidden></div>
       </div>
 
+      <!-- Dar baixa em clientes com contrato assinado (casa por CPF) -->
+      <div id="clientes-box" class="hygiene-box">
+        <div class="hygiene-head">
+          <strong>📇 Dar baixa em clientes (contrato assinado)</strong>
+          <button id="clientes-btn" class="btn primary small">Subir planilha</button>
+          <input type="file" id="clientes-input" accept=".xlsx,.xlsm,.csv,.txt" hidden />
+        </div>
+        <div class="imp-meta">Sobe uma planilha com os <strong>clientes que já fecharam contrato</strong>. O sistema casa por <strong>CPF</strong> e dá baixa: esses registros somem de <strong>toda prospecção e exportação</strong>, para não captar de novo quem já é cliente. <span id="clientes-count" class="hg-pend"></span></div>
+        <div id="clientes-feedback" class="feedback"></div>
+      </div>
+
       <div id="imports-panel" class="imports-panel"></div>
     </div>
   </div>

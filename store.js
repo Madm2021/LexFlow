@@ -209,11 +209,13 @@ function getColumns() {
   return COLUMNS.map((c) => ({ column_name: c.key, original_name: c.label }));
 }
 function getStats() {
-  return cached('stats', () => ({
-    records: db.prepare('SELECT COUNT(*) AS n FROM records').get().n,
-    columns: COLUMN_KEYS.length,
-    imports: db.prepare('SELECT COUNT(*) AS n FROM imports').get().n,
-  }));
+  return cached('stats', () => {
+    // "records" = base ATIVA (exclui os clientes em baixa), para casar com a
+    // lista e a distribuição. "clientes" fica à parte (transparência).
+    const clientes = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _cliente = 1').get().n;
+    const records = db.prepare('SELECT COUNT(*) AS n FROM records WHERE _cliente IS NULL').get().n;
+    return { records, clientes, columns: COLUMN_KEYS.length, imports: db.prepare('SELECT COUNT(*) AS n FROM imports').get().n };
+  });
 }
 
 function isUnfiltered({ q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null } = {}) {
@@ -222,8 +224,10 @@ function isUnfiltered({ q = '', filters = {}, validCpf = false, excludeProspecte
 }
 
 function query(opts = {}) {
+  // O total "sem filtro" também exclui os clientes em baixa (_cliente IS NULL),
+  // para casar com as linhas exibidas. Fica cacheado (recalcula só na baixa).
   const total = isUnfiltered(opts)
-    ? cached('total', () => db.prepare('SELECT COUNT(*) AS n FROM records').get().n)
+    ? cached('total_ativos', () => db.prepare('SELECT COUNT(*) AS n FROM records WHERE _cliente IS NULL').get().n)
     : core.count(db, opts);
   return core.query(db, opts, total);
 }
@@ -549,6 +553,40 @@ function buildCidIndex() {
 }
 
 // ---------------------------------------------------------------------------
+// CLIENTES (dar baixa): casa os CPFs do arquivo de clientes com a base e marca
+// os registros como cliente fechado, para sumirem de todos os recortes.
+// ---------------------------------------------------------------------------
+// Só os dígitos do CPF gravado (vem formatado "xxx.xxx.xxx-xx").
+const CPF_DIGITS = "replace(replace(replace(replace(COALESCE(cpf,''),'.',''),'-',''),' ',''),'/','')";
+
+function marcarClientes(cpfs) {
+  if (!cpfs || cpfs.length === 0) return 0;
+  let changes = 0;
+  const at = new Date().toISOString();
+  const tx = db.transaction(() => {
+    db.exec('DROP TABLE IF EXISTS _cli');
+    db.exec('CREATE TEMP TABLE _cli (cpf TEXT PRIMARY KEY)');
+    const ins = db.prepare('INSERT OR IGNORE INTO _cli(cpf) VALUES (?)');
+    for (const c of cpfs) ins.run(c);
+    const info = db.prepare(
+      `UPDATE records SET _cliente = 1, _cliente_at = ?
+       WHERE _cliente IS NULL AND ${CPF_DIGITS} IN (SELECT cpf FROM _cli)`,
+    ).run(at);
+    changes = info.changes;
+    db.exec('DROP TABLE IF EXISTS _cli');
+  });
+  tx();
+  // A baixa muda o que aparece em TODO recorte: invalida os caches.
+  if (changes > 0) bumpData();
+  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
+  return changes;
+}
+
+function clientesStats() {
+  return { total: db.prepare('SELECT COUNT(*) AS n FROM records WHERE _cliente = 1').get().n };
+}
+
+// ---------------------------------------------------------------------------
 // Histórico e remoção.
 // ---------------------------------------------------------------------------
 function listImports() {
@@ -601,6 +639,8 @@ module.exports = {
   removeRegiao,
   prospectStats,
   buildCidIndex,
+  marcarClientes,
+  clientesStats,
   listImports,
   deleteBySource,
   clearAll,

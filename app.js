@@ -630,6 +630,9 @@ async function loadFacets() {
   const linhas = Math.max(anoItems.length, 10);
   const trim = (arr) => (arr || []).slice(0, linhas);
   const tiers = d.byCidTier || { A: 0, B: 0, C: 0 };
+  // Quem não caiu em A/B/C: CID fora da régua de sequela ou sem CID. Assim a
+  // conta fecha na tela (Alta + Média + Baixa + Sem classificação = total).
+  const semClass = Math.max(0, (d.total || 0) - tiers.A - tiers.B - tiers.C);
   const tierNote = (t, emoji, label) => el('span', {
     class: `dist-note tier-note tier-${t}${state.cidTier === t ? ' on' : ''}`,
     title: `Filtrar pelos casos de potencial ${label.toLowerCase()}`,
@@ -645,6 +648,7 @@ async function loadFacets() {
       tierNote('A', '🟢', 'Alta'),
       tierNote('B', '🟡', 'Média'),
       tierNote('C', '🔴', 'Baixa'),
+      el('span', { class: 'dist-note', title: 'CID fora da régua de sequela ou sem CID preenchido' }, ['⚪ ', el('strong', { text: fmt(semClass) }), ' sem classificação']),
       el('span', { class: 'dist-note' }, ['🔢 ', el('strong', { text: fmt(semCat) }), ` sem CAT`]),
       semAno ? el('span', { class: 'dist-note' }, ['📅 ', el('strong', { text: fmt(semAno) }), ` sem ano`]) : null,
     ]),

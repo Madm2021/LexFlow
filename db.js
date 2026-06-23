@@ -26,7 +26,7 @@ const db = new Database(DB_PATH);
 //   disco (volume de 1 TB), em vez de estourar a memória.
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
-db.pragma('cache_size = -131072');
+db.pragma('cache_size = -1048576');
 db.pragma('mmap_size = 268435456');
 
 // Constantes de esquema vêm de schema.js (compartilhadas com o worker).

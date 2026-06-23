@@ -13,7 +13,7 @@ const DB_PATH = process.env.LEXFLOW_DB || path.join(__dirname, 'data', 'lexflow.
 // volume, não para a RAM. Vale também para a conexão do worker.
 if (!process.env.SQLITE_TMPDIR) process.env.SQLITE_TMPDIR = path.dirname(DB_PATH);
 const db = new Database(DB_PATH, { readonly: true });
-db.pragma('cache_size = -131072');
+db.pragma('cache_size = -524288');
 db.pragma('mmap_size = 268435456');
 
 parentPort.on('message', (msg) => {

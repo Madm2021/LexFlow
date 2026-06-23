@@ -83,4 +83,13 @@ function cidTierSql(col = 'cid_10') {
     ELSE NULL END`;
 }
 
-module.exports = { TIER_A, TIER_B, TIER_C, TIER_LABELS, classifyCid, categoryOf, cidTierSql };
+// Categorias (prefixos de 3 caracteres) de um nível — para filtrar via
+// "cid_10 LIKE 'S68%'", que usa o índice idx_cid_10 (rápido, sem varrer tudo).
+function tierCategories(t) {
+  if (t === 'A') return [...TIER_A];
+  if (t === 'B') return [...TIER_B];
+  if (t === 'C') return [...TIER_C];
+  return [];
+}
+
+module.exports = { TIER_A, TIER_B, TIER_C, TIER_LABELS, classifyCid, categoryOf, cidTierSql, tierCategories };

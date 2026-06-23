@@ -5,7 +5,7 @@
 // compartilham exatamente a mesma lógica, cada um com sua conexão.
 const { COLUMNS, COLUMN_KEYS, FILTER_KEYS, FTS_FILTER_KEYS, DISTINCT_KEYS } = require('./schema');
 const { normalizeUF, variantsFor } = require('./uf');
-const { classifyCid, cidTierSql } = require('./cid');
+const { classifyCid, cidTierSql, tierCategories } = require('./cid');
 
 // Tokens de prefixo para o FTS5 (cada palavra vira "palavra*", com AND implícito).
 function prefixTerms(text) {
@@ -22,19 +22,25 @@ function ftsQuery(q) {
 }
 
 // Monta FROM/WHERE/params a partir de q + filtros (+ apenas CPF válido).
-function buildQuery({ q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null } = {}) {
+function buildQuery({ q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null, skipExclusions = false } = {}) {
   const where = [];
   const params = [];
   let from = 'FROM records r';
   if (validCpf) where.push('r._cpf_ok = 1');
-  // "Esconder já prospectados": deixa de fora os leads já carimbados.
-  if (excludeProspected) where.push('r._prospect IS NULL');
-  // Clientes com contrato assinado (baixa): NUNCA entram em nenhum recorte.
-  where.push('r._cliente IS NULL');
-  // Triagem por potencial de sequela do CID (A/B/C).
+  // Exclusões (prospectados/clientes). Quando skipExclusions, ficam de fora —
+  // a contagem usa subtração (ver `count`) para não fazer leituras aleatórias.
+  if (!skipExclusions) {
+    if (excludeProspected) where.push('r._prospect IS NULL');
+    where.push('r._cliente IS NULL'); // clientes em baixa nunca entram
+  }
+  // Triagem por potencial de sequela do CID (A/B/C): vira "cid_10 LIKE 'S68%'..."
+  // (usa o índice idx_cid_10, em vez de varrer a base com um CASE).
   if (cidTier === 'A' || cidTier === 'B' || cidTier === 'C') {
-    where.push(`${cidTierSql('cid_10')} = ?`);
-    params.push(cidTier);
+    const cats = tierCategories(cidTier);
+    if (cats.length) {
+      where.push(`(${cats.map(() => 'r.cid_10 LIKE ?').join(' OR ')})`);
+      cats.forEach((c) => params.push(`${c}%`));
+    }
   }
 
   const ftsTerms = [];
@@ -118,9 +124,20 @@ function query(db, { limit = 50, offset = 0, q = '', filters = {}, validCpf = fa
   return { columns, rows, total, limit: safeLimit, offset: safeOffset };
 }
 
-function count(db, { q = '', filters = {}, validCpf = false, excludeProspected = false, cidTier = null } = {}) {
-  const { from, whereSql, params } = buildQuery({ q, filters, validCpf, excludeProspected, cidTier });
-  return db.prepare(`SELECT COUNT(*) AS n ${from} ${whereSql}`).get(...params).n;
+// Contagem do recorte. PORQUÊ da subtração: "_cliente IS NULL"/"_prospect IS
+// NULL" não usam índice (quase tudo é NULL), então somá-los ao WHERE obrigava o
+// SQLite a buscar a linha de cada candidato (milhões de leituras aleatórias =
+// lento). Aqui contamos o recorte SEM essas exclusões (usa só índices) e
+// subtraímos os excluídos que casam o recorte (poucos: vêm dos índices parciais
+// idx_prospect/idx_cliente). Mesmo resultado, ordens de magnitude mais rápido.
+function count(db, opts = {}) {
+  const base = buildQuery({ ...opts, skipExclusions: true });
+  const baseN = db.prepare(`SELECT COUNT(*) AS n ${base.from} ${base.whereSql}`).get(...base.params).n;
+  const pos = ['r._cliente = 1'];
+  if (opts.excludeProspected) pos.push('r._prospect = 1');
+  const exWhere = base.whereSql ? `${base.whereSql} AND (${pos.join(' OR ')})` : `WHERE (${pos.join(' OR ')})`;
+  const exN = db.prepare(`SELECT COUNT(*) AS n ${base.from} ${exWhere}`).get(...base.params).n;
+  return Math.max(0, baseN - exN);
 }
 
 // --- Contagens / distribuição ---

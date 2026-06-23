@@ -233,6 +233,11 @@ for (const [col, type] of [['_cliente', 'INTEGER'], ['_cliente_at', 'TEXT']]) {
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_cliente ON records(_cliente) WHERE _cliente IS NOT NULL');
 
+// Remove o índice por expressão da triagem de CID: a construção dele travava a
+// thread por minutos no boot. A triagem agora filtra via "cid_10 LIKE 'S68%'",
+// que usa o idx_cid_10 já existente — rápido e sem travar.
+db.exec('DROP INDEX IF EXISTS idx_cid_tier');
+
 // Regiões (UF ou município) sinalizadas como "em prospecção". É o controle
 // grosso (a região toda), que convive com a marcação fina por registro acima.
 db.exec(`

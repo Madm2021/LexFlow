@@ -329,8 +329,6 @@ if (require.main === module) {
     console.log(`Banco de dados: ${DB_PATH}`);
     // Pré-calcula a distribuição no worker (não trava o servidor).
     setTimeout(() => { try { store.warmStart(); } catch (e) { console.error('warmStart:', e.message); } }, 2000);
-    // Constrói o índice da triagem de CID uma vez, em segundo plano (idempotente).
-    setTimeout(() => { try { store.buildCidIndex(); } catch (e) { console.error('buildCidIndex:', e.message); } }, 8000);
     // Auto-retoma o "reunir duplicados" se ficou pendente (ex.: reinício no meio):
     // continua do ponto exato salvo, sem precisar clicar de novo.
     setTimeout(() => {

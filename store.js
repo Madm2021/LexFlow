@@ -6,7 +6,6 @@ const { db } = require('./db');
 const { COLUMNS, COLUMN_KEYS, FILTER_KEYS, FTS_FILTER_KEYS, ALL_FILTER_KEYS, DISTINCT_KEYS } = require('./schema');
 const core = require('./querycore');
 const { normalizeCpf, normalizeDate, recordKey } = require('./hygiene');
-const { cidTierSql } = require('./cid');
 
 // ---------------------------------------------------------------------------
 // Caches: memória (por versão dos dados) + persistente em app_cache (sobrevive
@@ -226,11 +225,17 @@ function isUnfiltered({ q = '', filters = {}, validCpf = false, excludeProspecte
 }
 
 function query(opts = {}) {
-  // O total "sem filtro" também exclui os clientes em baixa (_cliente IS NULL),
-  // para casar com as linhas exibidas. Fica cacheado (recalcula só na baixa).
-  const total = isUnfiltered(opts)
-    ? cached('total_ativos', () => db.prepare('SELECT COUNT(*) AS n FROM records WHERE _cliente IS NULL').get().n)
-    : core.count(db, opts);
+  // Sem filtro do usuário (só os interruptores de exclusão): o total é cacheado,
+  // porque é a tela de abertura — atingida a cada carregamento. Com filtro real,
+  // a contagem (por subtração) já é rápida.
+  const noUserFilter = !opts.q && !opts.validCpf && !opts.cidTier
+    && !ALL_FILTER_KEYS.some((k) => opts.filters && opts.filters[k] != null && String(opts.filters[k]).trim() !== '');
+  let total;
+  if (noUserFilter) {
+    total = cached(opts.excludeProspected ? 'total_default' : 'total_ativos', () => core.count(db, opts));
+  } else {
+    total = core.count(db, opts);
+  }
   return core.query(db, opts, total);
 }
 
@@ -512,6 +517,7 @@ function markProspect(opts = {}, lote = null) {
     `UPDATE records SET _prospect = 1, _prospect_at = ?, _prospect_lote = ?
      WHERE _prospect IS NULL AND _rowid IN (${sql})`,
   ).run(at, lote, ...params);
+  if (info.changes > 0) bumpData(); // muda os totais "esconder prospectados"
   try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
   return info.changes;
 }
@@ -522,6 +528,7 @@ function unmarkProspect(opts = {}) {
     `UPDATE records SET _prospect = NULL, _prospect_at = NULL, _prospect_lote = NULL
      WHERE _prospect = 1 AND _rowid IN (${sql})`,
   ).run(...params);
+  if (info.changes > 0) bumpData();
   try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
   return info.changes;
 }
@@ -547,12 +554,6 @@ function prospectStats() {
   return { totalMarcados, regioes: listRegioes() };
 }
 
-// Índice por EXPRESSÃO para a triagem de CID (mesma régua do cid.js). Construído
-// uma vez, em segundo plano (não trava o boot), e idempotente (IF NOT EXISTS).
-function buildCidIndex() {
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_cid_tier ON records (${cidTierSql('cid_10')})`);
-  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignora */ }
-}
 
 // ---------------------------------------------------------------------------
 // CLIENTES (dar baixa): casa os CPFs do arquivo de clientes com a base e marca
@@ -666,7 +667,6 @@ module.exports = {
   addRegiao,
   removeRegiao,
   prospectStats,
-  buildCidIndex,
   startBaixa,
   resumeBaixa,
   baixaStep,
